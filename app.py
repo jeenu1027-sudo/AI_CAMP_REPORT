@@ -162,6 +162,7 @@ def error_metrics_endpoint():
         'timestamp': datetime.now(JST).isoformat()
     })
 
+@app.route('/api/schedule')
 @app.route('/api/schedule-info')
 def schedule_info():
     """스케줄 정보 반환"""

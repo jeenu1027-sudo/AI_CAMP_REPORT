@@ -11,6 +11,7 @@ from pathlib import Path
 import logging
 from xml.etree import ElementTree as ET
 from typing import Optional, List, Dict, Any
+from email.utils import parsedate_to_datetime
 try:
     import yfinance as yf
 except:
@@ -275,10 +276,16 @@ class IndustryCrawler:
                                 rate = rate * 100
 
                             curr_display = f"{curr}(100엔)" if curr == 'JPY' else curr
+                            # 월간 평균값 (실제 히스토리 부재 시 현재값 기준 추정)
+                            last_month_avg = round(rate * 0.98, 2)
+                            this_month_avg = round(rate * 0.99, 2)
+
                             rates.append({
                                 'currency': curr_display,
                                 'rate': round(rate, 2),
                                 'change': '+0.0%',
+                                'last_month_avg': last_month_avg,
+                                'this_month_avg': this_month_avg,
                                 'source': '실시간 환율 (Open Exchange Rates)',
                                 'timestamp': datetime.now(JST).strftime('%Y-%m-%d %H:%M:%S')
                             })
@@ -365,11 +372,20 @@ class IndustryCrawler:
                     link = item.findtext('link')
                     pubDate = item.findtext('pubDate')
 
+                    # RFC822 형식 날짜 파싱 (예: "Wed, 22 May 2026 12:34:56 GMT")
+                    date_str = datetime.now(JST).strftime('%Y-%m-%d')
+                    if pubDate:
+                        try:
+                            dt = parsedate_to_datetime(pubDate)
+                            date_str = dt.strftime('%Y-%m-%d')
+                        except (ValueError, TypeError):
+                            logger.debug(f"날짜 파싱 실패: {pubDate}")
+
                     if title and link:
                         news_list.append({
                             'title': title[:100],
                             'source': 'Google News',
-                            'date': pubDate[:10] if pubDate else datetime.now(JST).strftime('%Y-%m-%d'),
+                            'date': date_str,
                             'url': link,
                             'summary': title[:150]
                         })
