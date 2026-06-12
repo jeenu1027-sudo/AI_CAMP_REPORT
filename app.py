@@ -14,6 +14,7 @@ import threading
 
 from crawler import IndustryCrawler
 from error_handler import error_metrics, health_check
+from rubric_validator import validate_rubric
 
 # 로깅 설정
 logging.basicConfig(
@@ -54,6 +55,30 @@ def scheduled_update():
     finally:
         _is_crawling = False
         _crawl_lock.release()
+
+def validate_project_rubric():
+    """프로젝트 루브릭 자동 검증 (매일 8:00 AM JST)"""
+    logger.info("=" * 50)
+    logger.info("🔍 프로젝트 루브릭 검증 실행")
+    logger.info(f"시간: {datetime.now(JST).strftime('%Y-%m-%d %H:%M:%S %Z')}")
+    logger.info("=" * 50)
+
+    try:
+        results = validate_rubric()
+        pass_rate = results['summary']['pass_rate']
+
+        if pass_rate >= 95:
+            logger.info(f"✅ 루브릭 검증 완료: A+ ({pass_rate:.1f}%)")
+        elif pass_rate >= 85:
+            logger.info(f"✅ 루브릭 검증 완료: A ({pass_rate:.1f}%)")
+        elif pass_rate >= 75:
+            logger.warning(f"⚠️  루브릭 검증 완료: B ({pass_rate:.1f}%)")
+        else:
+            logger.error(f"❌ 루브릭 검증 실패: C ({pass_rate:.1f}%)")
+
+        logger.info("=" * 50)
+    except Exception as e:
+        logger.error(f"❌ 루브릭 검증 중 오류: {e}")
 
 @app.route('/')
 def index():
@@ -140,43 +165,89 @@ def error_metrics_endpoint():
 @app.route('/api/schedule-info')
 def schedule_info():
     """스케줄 정보 반환"""
-    next_run = scheduler.get_job('scheduled_update')
-    if next_run:
-        return jsonify({
-            'next_run': str(next_run.next_run_time),
-            'enabled': True
+    rubric_job = scheduler.get_job('rubric_validation')
+    data_job = scheduler.get_job('scheduled_update')
+
+    schedule_info_dict = {
+        'enabled': True,
+        'jobs': []
+    }
+
+    if rubric_job:
+        schedule_info_dict['jobs'].append({
+            'name': '루브릭 검증',
+            'next_run': str(rubric_job.next_run_time),
+            'trigger': '매일 8:00 AM JST'
         })
-    return jsonify({'enabled': False})
+
+    if data_job:
+        schedule_info_dict['jobs'].append({
+            'name': '데이터 수집',
+            'next_run': str(data_job.next_run_time),
+            'trigger': '매일 8:01 AM JST'
+        })
+
+    return jsonify(schedule_info_dict)
 
 if __name__ == '__main__':
-    # 스케줄 설정: 매일 8시 JST에 업데이트
+    # 스케줄 설정: 매일 8시 JST
+    # 8:00 AM - 루브릭 검증
     scheduler.add_job(
-        scheduled_update,
+        validate_project_rubric,
         CronTrigger(hour=8, minute=0, timezone=JST),
-        id='scheduled_update',
-        name='Daily update at 8:00 JST'
+        id='rubric_validation',
+        name='Daily rubric validation at 8:00 JST'
     )
 
-    # 앱 시작시 초기 데이터 수집 (타임아웃 설정)
-    logger.info("앱 시작, 초기 데이터 수집...")
-    try:
-        import threading
-        def init_crawler():
-            crawler = IndustryCrawler()
-            crawler.run()
+    # 8:01 AM - 데이터 수집 업데이트
+    scheduler.add_job(
+        scheduled_update,
+        CronTrigger(hour=8, minute=1, timezone=JST),
+        id='scheduled_update',
+        name='Daily update at 8:01 JST'
+    )
 
-        # 별도 스레드에서 크롤러 실행 (타임아웃 방지)
+    # 앱 시작시 초기 데이터 수집 (타임아웃: 5분)
+    logger.info("앱 시작, 초기 데이터 수집 중... (타임아웃: 5분)")
+    try:
+        def init_crawler():
+            """초기 크롤러 (타임아웃 감시)"""
+            try:
+                crawler = IndustryCrawler()
+                crawler.run()
+                logger.info("✓ 초기 데이터 수집 완료")
+            except Exception as e:
+                logger.error(f"❌ 초기 크롤링 오류: {e}")
+
+        # 별도 스레드에서 크롤러 실행 (daemon=True: 앱 종료 시 자동 종료)
         crawler_thread = threading.Thread(target=init_crawler, daemon=True)
         crawler_thread.start()
-    except Exception as e:
-        logger.warning(f"초기 데이터 수집 실패: {e}")
 
-    scheduler.start()
+        # 초기화 타임아웃: 5분(300초) - 과도하게 오래 대기하지 않음
+        INIT_TIMEOUT_SECONDS = 300
+        crawler_thread.join(timeout=INIT_TIMEOUT_SECONDS)
+
+        if crawler_thread.is_alive():
+            logger.warning(f"⚠ 초기 데이터 수집 타임아웃 ({INIT_TIMEOUT_SECONDS}초) - 백그라운드에서 계속 실행")
+        else:
+            logger.info("✓ 초기화 완료")
+
+    except Exception as e:
+        logger.error(f"❌ 초기화 중 오류: {e}")
+
+    try:
+        scheduler.start()
+        logger.info("✓ APScheduler 시작 완료")
+    except Exception as e:
+        logger.error(f"❌ APScheduler 시작 실패: {e}")
+        raise
 
     logger.info("=" * 50)
-    logger.info("Flask 서버 시작")
-    logger.info("다음 업데이트: 매일 8시(JST)")
-    logger.info("http://localhost:5000 에 접속하세요")
+    logger.info("✓ Flask 서버 시작")
+    logger.info("  📋 루브릭 검증: 매일 8:00 AM JST")
+    logger.info("  📊 데이터 업데이트: 매일 8:01 AM JST")
+    logger.info("  http://localhost:5000 에 접속하세요")
+    logger.info("  헬스 체크: http://localhost:5000/api/health")
     logger.info("=" * 50)
 
     app.run(debug=False, host='0.0.0.0', port=5000)

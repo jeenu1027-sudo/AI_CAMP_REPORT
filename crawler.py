@@ -10,6 +10,7 @@ import pytz
 from pathlib import Path
 import logging
 from xml.etree import ElementTree as ET
+from typing import Optional, List, Dict, Any
 try:
     import yfinance as yf
 except:
@@ -52,25 +53,33 @@ class IndustryCrawler:
             'policy_news': []
         }
 
-    def fetch_lme_prices(self):
+    def fetch_lme_prices(self) -> None:
         """
-        LME 비철금속가격 수집
+        LME 비철금속가격 수집 (부분 성공 추적)
         실제 데이터: metals-api.com 또는 Yahoo Finance
         폴백: 샘플 데이터
         """
         try:
             logger.info("LME 비철금속가격 수집 중...")
-            prices = self._try_fetch_metals_api()
+            result = self._try_fetch_metals_api()
 
-            if not prices:
+            if result is None:
                 logger.warning("⚠ API 연결 실패 - 샘플 데이터 사용")
                 prices = self._get_sample_lme_prices()
+            else:
+                # 부분 성공 처리
+                prices = result.get('prices', []) if isinstance(result, dict) else result
+                if isinstance(result, dict) and 'report' in result:
+                    report = result['report']
+                    logger.info(f"부분 성공: {report['successful']}/{report['successful'] + report['failed']}개 수집 "
+                              f"({report['success_rate']:.0f}%)")
 
             self.data['lme_prices'] = prices
-            logger.info(f"✓ LME 비철금속가격 {len(prices)}개 로드 완료 (출처: {prices[0].get('source', 'Unknown')})")
+            if prices:
+                logger.info(f"✓ LME 비철금속가격 {len(prices)}개 로드 완료 (출처: {prices[0].get('source', 'Unknown')})")
 
         except Exception as e:
-            logger.error(f"LME 비철금속가격 수집 중 오류: {e}")
+            logger.error(f"❌ LME 비철금속가격 수집 중 오류: {e}")
             self.data['lme_prices'] = self._get_sample_lme_prices()
 
     @retry_with_backoff(
@@ -79,7 +88,7 @@ class IndustryCrawler:
         backoff_factor=2.0,
         exceptions=(requests.RequestException, ValueError)
     )
-    def _try_fetch_metals_api(self):
+    def _try_fetch_metals_api(self) -> Optional[Dict[str, Any]]:
         """metals-api.com에서 금속 가격 가져오기 (재시도 로직 포함)"""
         metals = [
             {'code': 'XCU', 'name': '구리(Copper)', 'unit': 'USD/톤'},
@@ -135,14 +144,19 @@ class IndustryCrawler:
                 logger.warning(f"  ⚠ {metal['name']} 연결 실패")
 
         if prices:
-            logger.info(f"부분 성공: {partial_handler.get_report()['successful']}/{len(metals)}개 수집")
-            return prices
+            report = partial_handler.get_report()
+            logger.info(f"부분 성공: {report['successful']}/{len(metals)}개 수집 ({report['success_rate']:.0f}%)")
+            # 가격과 부분 성공 리포트 함께 반환
+            return {
+                'prices': prices,
+                'report': report
+            }
         else:
             logger.warning("모든 금속 가격 수집 실패")
             return None
 
     @staticmethod
-    def _get_sample_lme_prices():
+    def _get_sample_lme_prices() -> List[Dict[str, Any]]:
         """샘플 LME 비철금속가격 데이터"""
         return [
             {'metal': '구리(Copper)', 'price': 9850, 'unit': 'USD/톤', 'change': '+1.2%', 'last_month_avg': 9620, 'this_month_avg': 9780, 'source': '샘플 데이터', 'timestamp': datetime.now(JST).strftime('%Y-%m-%d %H:%M:%S')},
@@ -151,7 +165,7 @@ class IndustryCrawler:
             {'metal': '알루미늄(Aluminum)', 'price': 2380, 'unit': 'USD/톤', 'change': '+0.8%', 'last_month_avg': 2360, 'this_month_avg': 2375, 'source': '샘플 데이터', 'timestamp': datetime.now(JST).strftime('%Y-%m-%d %H:%M:%S')},
         ]
 
-    def fetch_exchange_rates(self):
+    def fetch_exchange_rates(self) -> None:
         """
         환율정보 수집
         출처: 한국은행 API 또는 공개 데이터
@@ -175,9 +189,9 @@ class IndustryCrawler:
         max_retries=2,
         initial_delay=1.0,
         backoff_factor=2.0,
-        exceptions=(requests.RequestException, ValueError)
+        exceptions=(requests.RequestException, ValueError, ParsingError)
     )
-    def _try_fetch_exchange_api(self):
+    def _try_fetch_exchange_api(self) -> Optional[List[Dict[str, Any]]]:
         """
         환율 정보 API에서 가져오기 (재시도 로직 포함)
         시도: exchangerate-api.com (무료 플랜)
@@ -236,12 +250,29 @@ class IndustryCrawler:
                             continue
 
                 return rates if rates else None
+
+            else:
+                raise APIError(f"환율 API 에러: Status {response.status_code}")
+
+        except requests.Timeout:
+            logger.debug("환율 API 타임아웃")
+            raise NetworkError("Exchange rate API timeout")
+        except requests.ConnectionError as e:
+            logger.debug(f"환율 API 연결 오류: {str(e)[:50]}")
+            raise NetworkError(f"Exchange rate connection error: {str(e)}")
+        except requests.RequestException as e:
+            logger.debug(f"환율 API 요청 오류: {str(e)[:50]}")
+            raise NetworkError(f"Exchange rate request error: {str(e)}")
+        except ParsingError:
+            raise
+        except APIError:
+            raise
         except Exception as e:
-            logger.debug(f"환율 API 오류: {str(e)[:50]}")
-            return None
+            logger.error(f"환율 API 예상치 못한 오류: {str(e)[:50]}")
+            raise
 
     @staticmethod
-    def _get_sample_exchange_rates():
+    def _get_sample_exchange_rates() -> List[Dict[str, Any]]:
         """샘플 환율 데이터"""
         return [
             {'currency': 'USD', 'rate': 1298.50, 'change': '+0.2%', 'last_month_avg': 1285.30, 'this_month_avg': 1293.80, 'source': '샘플 데이터', 'timestamp': datetime.now(JST).strftime('%Y-%m-%d %H:%M:%S')},
@@ -250,7 +281,7 @@ class IndustryCrawler:
             {'currency': 'CNY', 'rate': 179.50, 'change': '+0.3%', 'last_month_avg': 178.20, 'this_month_avg': 179.10, 'source': '샘플 데이터', 'timestamp': datetime.now(JST).strftime('%Y-%m-%d %H:%M:%S')},
         ]
 
-    def fetch_steel_news(self):
+    def fetch_steel_news(self) -> None:
         """
         철강/선재 관련 뉴스 수집
         출처: 네이버 뉴스, Google News 등
@@ -271,7 +302,7 @@ class IndustryCrawler:
             self.data['steel_news'] = self._get_sample_steel_news()
 
     @staticmethod
-    def _fetch_google_news_rss(keyword: str, max_items: int = 5) -> list:
+    def _fetch_google_news_rss(keyword: str, max_items: int = 5) -> Optional[List[Dict[str, Any]]]:
         """
         Google News RSS에서 뉴스 수집 (헬퍼 함수 - DRY 원칙)
 
@@ -306,16 +337,29 @@ class IndustryCrawler:
                         logger.info(f"  ✓ {title[:50]}")
 
                 return news_list if news_list else None
+
+        except requests.Timeout:
+            logger.debug(f"Google News RSS 타임아웃 (키워드: {keyword})")
+            return None
+        except requests.ConnectionError as e:
+            logger.debug(f"Google News RSS 연결 오류: {str(e)[:50]}")
+            return None
+        except requests.RequestException as e:
+            logger.debug(f"Google News RSS 요청 오류: {str(e)[:50]}")
+            return None
+        except ET.ParseError as e:
+            logger.debug(f"Google News RSS XML 파싱 오류: {str(e)[:50]}")
+            return None
         except Exception as e:
-            logger.debug(f"Google News RSS 오류: {str(e)[:50]}")
+            logger.error(f"Google News RSS 예상치 못한 오류: {str(e)[:50]}")
             return None
 
-    def _try_fetch_news_api(self, keyword):
+    def _try_fetch_news_api(self, keyword: str) -> Optional[List[Dict[str, Any]]]:
         """뉴스 API에서 뉴스 검색"""
         return self._fetch_google_news_rss(keyword, max_items=5)
 
     @staticmethod
-    def _get_sample_steel_news():
+    def _get_sample_steel_news() -> List[Dict[str, Any]]:
         """샘플 철강 뉴스 데이터"""
         return [
             {
@@ -341,7 +385,7 @@ class IndustryCrawler:
             },
         ]
 
-    def fetch_competitor_news(self):
+    def fetch_competitor_news(self) -> None:
         """
         경쟁사 뉴스 수집
         경쟁사: 고려제강, 만호제강, 한국선재, 동일제강, 청우제강, 고려특수선재, 덕흥제선
@@ -367,7 +411,7 @@ class IndustryCrawler:
             logger.error(f"경쟁사 뉴스 수집 중 오류: {e}")
             self.data['competitor_news'] = self._get_sample_competitor_news()
 
-    def _try_fetch_competitor_news(self, company_name):
+    def _try_fetch_competitor_news(self, company_name: str) -> Optional[List[Dict[str, Any]]]:
         """특정 경쟁사의 뉴스 수집"""
         try:
             # Google News RSS로 회사명 검색
@@ -375,7 +419,11 @@ class IndustryCrawler:
             response = requests.get(url, timeout=TimeoutConfig.NEWS_API_TIMEOUT)
 
             if response.status_code == 200:
-                root = ET.fromstring(response.content)
+                try:
+                    root = ET.fromstring(response.content)
+                except ET.ParseError as e:
+                    logger.debug(f"{company_name} XML 파싱 오류: {str(e)[:30]}")
+                    return None
 
                 news_list = []
                 for item in root.findall('.//item')[:3]:  # 회사당 최대 3개
@@ -393,13 +441,25 @@ class IndustryCrawler:
                         })
 
                 return news_list if news_list else None
+            else:
+                logger.debug(f"{company_name} 뉴스 API 에러: {response.status_code}")
+                return None
 
+        except requests.Timeout:
+            logger.debug(f"{company_name} 뉴스 타임아웃")
+            return None
+        except requests.ConnectionError:
+            logger.debug(f"{company_name} 뉴스 연결 오류")
+            return None
+        except requests.RequestException as e:
+            logger.debug(f"{company_name} 뉴스 요청 오류: {str(e)[:30]}")
+            return None
         except Exception as e:
-            logger.debug(f"{company_name} 뉴스 수집 오류: {str(e)[:30]}")
+            logger.debug(f"{company_name} 뉴스 예상치 못한 오류: {str(e)[:30]}")
             return None
 
     @staticmethod
-    def _get_sample_competitor_news():
+    def _get_sample_competitor_news() -> List[Dict[str, Any]]:
         """샘플 경쟁사 뉴스 데이터 (DART 공시 정보)"""
         return [
             {
@@ -436,7 +496,7 @@ class IndustryCrawler:
             },
         ]
 
-    def fetch_market_info(self):
+    def fetch_market_info(self) -> None:
         """
         시장정보 수집
         관련 산업: 자동차, 건설/토목, 전자/가전, 전력선 등
@@ -456,7 +516,7 @@ class IndustryCrawler:
             logger.error(f"시장정보 수집 중 오류: {e}")
             self.data['market_info'] = self._get_sample_market_info()
 
-    def _try_fetch_market_api(self):
+    def _try_fetch_market_api(self) -> Optional[List[Dict[str, Any]]]:
         """시장정보 API 수집"""
         try:
             # 통계청, 산업통상자원부 데이터 또는 뉴스 기반
@@ -469,7 +529,12 @@ class IndustryCrawler:
                     response = requests.get(url, timeout=TimeoutConfig.NEWS_API_TIMEOUT)
 
                     if response.status_code == 200:
-                        root = ET.fromstring(response.content)
+                        try:
+                            root = ET.fromstring(response.content)
+                        except ET.ParseError as e:
+                            logger.debug(f"시장정보 XML 파싱 오류 ({keyword}): {str(e)[:30]}")
+                            continue
+
                         item = root.find('.//item')
 
                         if item is not None:
@@ -480,17 +545,28 @@ class IndustryCrawler:
                                 'impact': '긍정적' if '증가' in title or '성장' in title else '중립적',
                                 'date': datetime.now(JST).strftime('%Y-%m-%d')
                             })
-                except:
+
+                except requests.Timeout:
+                    logger.debug(f"시장정보 타임아웃 ({keyword})")
+                    continue
+                except requests.ConnectionError:
+                    logger.debug(f"시장정보 연결 오류 ({keyword})")
+                    continue
+                except requests.RequestException as e:
+                    logger.debug(f"시장정보 요청 오류 ({keyword}): {str(e)[:30]}")
+                    continue
+                except Exception as e:
+                    logger.debug(f"시장정보 예상치 못한 오류 ({keyword}): {str(e)[:30]}")
                     continue
 
             return market_data if market_data else None
 
         except Exception as e:
-            logger.debug(f"시장정보 API 오류: {str(e)[:50]}")
+            logger.error(f"시장정보 API 예상치 못한 오류: {str(e)[:50]}")
             return None
 
     @staticmethod
-    def _get_sample_market_info():
+    def _get_sample_market_info() -> List[Dict[str, Any]]:
         """샘플 시장정보 데이터"""
         return [
             {
@@ -527,7 +603,7 @@ class IndustryCrawler:
             },
         ]
 
-    def fetch_policy_news(self):
+    def fetch_policy_news(self) -> None:
         """
         철강 관련 정책정보 수집
         출처: 산업통상자원부, 정책공시 사이트
@@ -547,7 +623,7 @@ class IndustryCrawler:
             logger.error(f"정책정보 수집 중 오류: {e}")
             self.data['policy_news'] = self._get_sample_policy_news()
 
-    def _try_fetch_policy_api(self):
+    def _try_fetch_policy_api(self) -> Optional[List[Dict[str, Any]]]:
         """정책정보 API 수집"""
         try:
             # 정책뉴스 관련 검색
@@ -560,7 +636,12 @@ class IndustryCrawler:
                     response = requests.get(url, timeout=TimeoutConfig.NEWS_API_TIMEOUT)
 
                     if response.status_code == 200:
-                        root = ET.fromstring(response.content)
+                        try:
+                            root = ET.fromstring(response.content)
+                        except ET.ParseError as e:
+                            logger.debug(f"정책정보 XML 파싱 오류 ({keyword}): {str(e)[:30]}")
+                            continue
+
                         item = root.find('.//item')
 
                         if item is not None:
@@ -571,17 +652,28 @@ class IndustryCrawler:
                                 'date': datetime.now(JST).strftime('%Y-%m-%d'),
                                 'content': title[:150]
                             })
-                except:
+
+                except requests.Timeout:
+                    logger.debug(f"정책정보 타임아웃 ({keyword})")
+                    continue
+                except requests.ConnectionError:
+                    logger.debug(f"정책정보 연결 오류 ({keyword})")
+                    continue
+                except requests.RequestException as e:
+                    logger.debug(f"정책정보 요청 오류 ({keyword}): {str(e)[:30]}")
+                    continue
+                except Exception as e:
+                    logger.debug(f"정책정보 예상치 못한 오류 ({keyword}): {str(e)[:30]}")
                     continue
 
             return policy_data if policy_data else None
 
         except Exception as e:
-            logger.debug(f"정책정보 API 오류: {str(e)[:50]}")
+            logger.error(f"정책정보 API 예상치 못한 오류: {str(e)[:50]}")
             return None
 
     @staticmethod
-    def _get_sample_policy_news():
+    def _get_sample_policy_news() -> List[Dict[str, Any]]:
         """샘플 정책정보 데이터"""
         return [
             {
@@ -604,7 +696,7 @@ class IndustryCrawler:
             },
         ]
 
-    def save_data(self):
+    def save_data(self) -> None:
         """수집한 데이터를 JSON 파일로 저장"""
         try:
             self.data['updated_at'] = datetime.now(JST).isoformat()
@@ -615,7 +707,7 @@ class IndustryCrawler:
         except Exception as e:
             logger.error(f"데이터 저장 실패: {e}")
 
-    def run(self):
+    def run(self) -> None:
         """전체 크롤링 실행"""
         logger.info("=" * 50)
         logger.info("철강산업 정보 수집 시작")

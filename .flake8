@@ -1,0 +1,16 @@
+[flake8]
+# 최대 라인 길이
+max-line-length = 100
+
+# 무시할 에러 코드
+ignore = E203, W503, E501, D100, D104
+
+# 제외할 디렉토리
+exclude = .git,__pycache__,build,dist,.venv,venv
+
+# 복잡도 제한
+max-complexity = 10
+
+# 문서화 검사 (docstring)
+# D100: Missing docstring in public module
+# D104: Missing docstring in public package
