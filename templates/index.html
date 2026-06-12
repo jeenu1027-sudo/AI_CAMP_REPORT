@@ -440,12 +440,13 @@
                 return;
             }
 
-            let html = '<table><thead><tr><th>비철금속</th><th>현재</th><th>지난달 평균</th><th>이번달 평균</th><th>변동</th><th>출처</th></tr></thead><tbody>';
+            let html = '<div style="margin-bottom: 10px; color: #666; font-size: 0.9em;">단위: 달러($)</div>';
+            html += '<table><thead><tr><th>비철금속</th><th>현재</th><th>지난달 평균</th><th>이번달 평균</th><th>변동</th><th>출처</th></tr></thead><tbody>';
             prices.forEach(p => {
                 const changeClass = p.change.includes('-') ? 'price-down' : 'price-up';
                 html += `<tr>
                     <td>${p.metal}</td>
-                    <td>${p.price.toLocaleString()} ${p.unit.split('/')[1]}</td>
+                    <td>${p.price.toLocaleString()}</td>
                     <td>${p.last_month_avg ? p.last_month_avg.toLocaleString() : '-'}</td>
                     <td>${p.this_month_avg ? p.this_month_avg.toLocaleString() : '-'}</td>
                     <td class="${changeClass}">${p.change}</td>
