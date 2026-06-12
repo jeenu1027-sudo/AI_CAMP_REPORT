@@ -42,12 +42,12 @@ class IndustryCrawler:
 
     def fetch_lme_prices(self):
         """
-        LME 금속가격 수집
+        LME 비철금속가격 수집
         실제 데이터: metals-api.com 또는 Yahoo Finance
         폴백: 샘플 데이터
         """
         try:
-            logger.info("LME 금속가격 수집 중...")
+            logger.info("LME 비철금속가격 수집 중...")
             prices = self._try_fetch_metals_api()
 
             if not prices:
@@ -55,10 +55,10 @@ class IndustryCrawler:
                 prices = self._get_sample_lme_prices()
 
             self.data['lme_prices'] = prices
-            logger.info(f"✓ LME 가격 {len(prices)}개 로드 완료 (출처: {prices[0].get('source', 'Unknown')})")
+            logger.info(f"✓ LME 비철금속가격 {len(prices)}개 로드 완료 (출처: {prices[0].get('source', 'Unknown')})")
 
         except Exception as e:
-            logger.error(f"LME 가격 수집 중 오류: {e}")
+            logger.error(f"LME 비철금속가격 수집 중 오류: {e}")
             self.data['lme_prices'] = self._get_sample_lme_prices()
 
     def _try_fetch_metals_api(self):
@@ -105,12 +105,12 @@ class IndustryCrawler:
 
     @staticmethod
     def _get_sample_lme_prices():
-        """샘플 LME 가격 데이터"""
+        """샘플 LME 비철금속가격 데이터"""
         return [
-            {'metal': '구리(Copper)', 'price': 9850, 'unit': 'USD/톤', 'change': '+1.2%', 'source': '샘플 데이터', 'timestamp': datetime.now(JST).strftime('%Y-%m-%d %H:%M:%S')},
-            {'metal': '니켈(Nickel)', 'price': 16500, 'unit': 'USD/톤', 'change': '-0.5%', 'source': '샘플 데이터', 'timestamp': datetime.now(JST).strftime('%Y-%m-%d %H:%M:%S')},
-            {'metal': '아연(Zinc)', 'price': 2720, 'unit': 'USD/톤', 'change': '+2.1%', 'source': '샘플 데이터', 'timestamp': datetime.now(JST).strftime('%Y-%m-%d %H:%M:%S')},
-            {'metal': '알루미늄(Aluminum)', 'price': 2380, 'unit': 'USD/톤', 'change': '+0.8%', 'source': '샘플 데이터', 'timestamp': datetime.now(JST).strftime('%Y-%m-%d %H:%M:%S')},
+            {'metal': '구리(Copper)', 'price': 9850, 'unit': 'USD/톤', 'change': '+1.2%', 'last_month_avg': 9620, 'this_month_avg': 9780, 'source': '샘플 데이터', 'timestamp': datetime.now(JST).strftime('%Y-%m-%d %H:%M:%S')},
+            {'metal': '니켈(Nickel)', 'price': 16500, 'unit': 'USD/톤', 'change': '-0.5%', 'last_month_avg': 16800, 'this_month_avg': 16450, 'source': '샘플 데이터', 'timestamp': datetime.now(JST).strftime('%Y-%m-%d %H:%M:%S')},
+            {'metal': '아연(Zinc)', 'price': 2720, 'unit': 'USD/톤', 'change': '+2.1%', 'last_month_avg': 2660, 'this_month_avg': 2710, 'source': '샘플 데이터', 'timestamp': datetime.now(JST).strftime('%Y-%m-%d %H:%M:%S')},
+            {'metal': '알루미늄(Aluminum)', 'price': 2380, 'unit': 'USD/톤', 'change': '+0.8%', 'last_month_avg': 2360, 'this_month_avg': 2375, 'source': '샘플 데이터', 'timestamp': datetime.now(JST).strftime('%Y-%m-%d %H:%M:%S')},
         ]
 
     def fetch_exchange_rates(self):
@@ -180,10 +180,10 @@ class IndustryCrawler:
     def _get_sample_exchange_rates():
         """샘플 환율 데이터"""
         return [
-            {'currency': 'USD', 'rate': 1298.50, 'change': '+0.2%', 'source': '샘플 데이터', 'timestamp': datetime.now(JST).strftime('%Y-%m-%d %H:%M:%S')},
-            {'currency': 'JPY(100엔)', 'rate': 948.30, 'change': '-0.1%', 'source': '샘플 데이터', 'timestamp': datetime.now(JST).strftime('%Y-%m-%d %H:%M:%S')},
-            {'currency': 'EUR', 'rate': 1410.20, 'change': '+0.5%', 'source': '샘플 데이터', 'timestamp': datetime.now(JST).strftime('%Y-%m-%d %H:%M:%S')},
-            {'currency': 'CNY', 'rate': 179.50, 'change': '+0.3%', 'source': '샘플 데이터', 'timestamp': datetime.now(JST).strftime('%Y-%m-%d %H:%M:%S')},
+            {'currency': 'USD', 'rate': 1298.50, 'change': '+0.2%', 'last_month_avg': 1285.30, 'this_month_avg': 1293.80, 'source': '샘플 데이터', 'timestamp': datetime.now(JST).strftime('%Y-%m-%d %H:%M:%S')},
+            {'currency': 'JPY(100엔)', 'rate': 948.30, 'change': '-0.1%', 'last_month_avg': 952.10, 'this_month_avg': 949.50, 'source': '샘플 데이터', 'timestamp': datetime.now(JST).strftime('%Y-%m-%d %H:%M:%S')},
+            {'currency': 'EUR', 'rate': 1410.20, 'change': '+0.5%', 'last_month_avg': 1395.60, 'this_month_avg': 1407.80, 'source': '샘플 데이터', 'timestamp': datetime.now(JST).strftime('%Y-%m-%d %H:%M:%S')},
+            {'currency': 'CNY', 'rate': 179.50, 'change': '+0.3%', 'last_month_avg': 178.20, 'this_month_avg': 179.10, 'source': '샘플 데이터', 'timestamp': datetime.now(JST).strftime('%Y-%m-%d %H:%M:%S')},
         ]
 
     def fetch_steel_news(self):

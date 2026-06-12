@@ -430,6 +430,8 @@
                     "price": 9850,
                     "unit": "USD/톤",
                     "change": "+1.2%",
+                    "last_month_avg": 9620,
+                    "this_month_avg": 9780,
                     "source": "LME",
                     "timestamp": new Date().toLocaleString('ko-KR')
                 },
@@ -438,6 +440,8 @@
                     "price": 16500,
                     "unit": "USD/톤",
                     "change": "-0.5%",
+                    "last_month_avg": 16800,
+                    "this_month_avg": 16450,
                     "source": "LME",
                     "timestamp": new Date().toLocaleString('ko-KR')
                 },
@@ -446,6 +450,8 @@
                     "price": 2720,
                     "unit": "USD/톤",
                     "change": "+2.1%",
+                    "last_month_avg": 2660,
+                    "this_month_avg": 2710,
                     "source": "LME",
                     "timestamp": new Date().toLocaleString('ko-KR')
                 },
@@ -454,15 +460,17 @@
                     "price": 2380,
                     "unit": "USD/톤",
                     "change": "+0.8%",
+                    "last_month_avg": 2360,
+                    "this_month_avg": 2375,
                     "source": "LME",
                     "timestamp": new Date().toLocaleString('ko-KR')
                 }
             ],
             "exchange_rates": [
-                { "currency": "USD", "rate": 1298.50, "change": "+0.2%", "source": "Exchange Rate API" },
-                { "currency": "JPY(100엔)", "rate": 948.30, "change": "-0.1%", "source": "Exchange Rate API" },
-                { "currency": "EUR", "rate": 1410.20, "change": "+0.5%", "source": "Exchange Rate API" },
-                { "currency": "CNY", "rate": 179.50, "change": "+0.3%", "source": "Exchange Rate API" }
+                { "currency": "USD", "rate": 1298.50, "change": "+0.2%", "last_month_avg": 1285.30, "this_month_avg": 1293.80, "source": "Exchange Rate API" },
+                { "currency": "JPY(100엔)", "rate": 948.30, "change": "-0.1%", "last_month_avg": 952.10, "this_month_avg": 949.50, "source": "Exchange Rate API" },
+                { "currency": "EUR", "rate": 1410.20, "change": "+0.5%", "last_month_avg": 1395.60, "this_month_avg": 1407.80, "source": "Exchange Rate API" },
+                { "currency": "CNY", "rate": 179.50, "change": "+0.3%", "last_month_avg": 178.20, "this_month_avg": 179.10, "source": "Exchange Rate API" }
             ],
             "steel_news": [
                 {
@@ -572,13 +580,14 @@
                 return;
             }
 
-            let html = '<table><thead><tr><th>금속</th><th>가격</th><th>단위</th><th>변동</th><th>출처</th></tr></thead><tbody>';
+            let html = '<table><thead><tr><th>비철금속</th><th>현재</th><th>지난달 평균</th><th>이번달 평균</th><th>변동</th><th>출처</th></tr></thead><tbody>';
             prices.forEach(p => {
                 const changeClass = p.change.includes('-') ? 'price-down' : 'price-up';
                 html += `<tr>
                     <td>${p.metal}</td>
-                    <td>${p.price.toLocaleString()}</td>
-                    <td>${p.unit}</td>
+                    <td>${p.price.toLocaleString()} ${p.unit.split('/')[1]}</td>
+                    <td>${p.last_month_avg ? p.last_month_avg.toLocaleString() : '-'}</td>
+                    <td>${p.this_month_avg ? p.this_month_avg.toLocaleString() : '-'}</td>
                     <td class="${changeClass}">${p.change}</td>
                     <td>${p.source}</td>
                 </tr>`;
@@ -595,12 +604,14 @@
                 return;
             }
 
-            let html = '<table><thead><tr><th>통화</th><th>환율</th><th>변동</th><th>출처</th></tr></thead><tbody>';
+            let html = '<table><thead><tr><th>통화</th><th>현재</th><th>지난달 평균</th><th>이번달 평균</th><th>변동</th><th>출처</th></tr></thead><tbody>';
             rates.forEach(r => {
                 const changeClass = r.change.includes('-') ? 'price-down' : 'price-up';
                 html += `<tr>
                     <td>${r.currency}</td>
                     <td>${r.rate.toLocaleString()}</td>
+                    <td>${r.last_month_avg ? r.last_month_avg.toLocaleString() : '-'}</td>
+                    <td>${r.this_month_avg ? r.this_month_avg.toLocaleString() : '-'}</td>
                     <td class="${changeClass}">${r.change}</td>
                     <td>${r.source}</td>
                 </tr>`;
