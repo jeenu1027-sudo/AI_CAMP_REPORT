@@ -598,15 +598,18 @@
             }
 
             let html = '<div style="margin-bottom: 10px; color: #666; font-size: 0.9em;">단위: 달러($)</div>';
-            html += '<table><thead><tr><th>비철금속</th><th>현재</th><th>지난달 평균</th><th>이번달 평균</th><th>변동</th><th>출처</th></tr></thead><tbody>';
+            html += '<table><thead><tr><th>비철금속</th><th>현재가</th><th>전일대비</th><th>등락률</th><th>기준일</th><th>출처</th></tr></thead><tbody>';
             prices.forEach(p => {
                 const changeClass = p.change.includes('-') ? 'price-down' : 'price-up';
+                const changeVal = p.change_value !== undefined
+                    ? (p.change_value >= 0 ? '+' : '') + p.change_value.toLocaleString()
+                    : '-';
                 html += `<tr>
                     <td>${p.metal}</td>
                     <td>${p.price.toLocaleString()}</td>
-                    <td>${p.last_month_avg ? p.last_month_avg.toLocaleString() : '-'}</td>
-                    <td>${p.this_month_avg ? p.this_month_avg.toLocaleString() : '-'}</td>
+                    <td class="${changeClass}">${changeVal}</td>
                     <td class="${changeClass}">${p.change}</td>
+                    <td>${p.date || '-'}</td>
                     <td>${p.source}</td>
                 </tr>`;
             });
@@ -721,8 +724,21 @@
             content.innerHTML = html;
         }
 
-        // 페이지 로드 시 데이터 표시
-        window.addEventListener('load', function() {
+        // 페이지 로드 시 Flask API 우선 시도, 실패 시 샘플 데이터
+        window.addEventListener('load', async function() {
+            try {
+                const controller = new AbortController();
+                const timeout = setTimeout(() => controller.abort(), 3000);
+                const response = await fetch('http://localhost:5000/api/data', { signal: controller.signal });
+                clearTimeout(timeout);
+                if (response.ok) {
+                    const data = await response.json();
+                    renderData(data);
+                    return;
+                }
+            } catch (e) {
+                // Flask 서버 미실행 - 샘플 데이터로 폴백
+            }
             renderData(sampleData);
         });
     </script>
