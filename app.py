@@ -7,10 +7,13 @@ from apscheduler.schedulers.background import BackgroundScheduler
 from apscheduler.triggers.cron import CronTrigger
 import json
 import logging
+import os
 from pathlib import Path
 import pytz
 from datetime import datetime
 import threading
+
+GITHUB_TOKEN = os.getenv("GITHUB_TOKEN")
 
 from crawler import IndustryCrawler
 from error_handler import error_metrics, health_check

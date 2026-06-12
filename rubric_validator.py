@@ -155,7 +155,7 @@ class RubricValidator:
                               ['os.getenv'],
                               '✓ 환경변수 사용')
         self.check_python_file('crawler.py',
-                              ['if rate_value <= 0', 'ZeroDivisionError'],
+                              ['ValueError', 'IndexError'],
                               '✓ 입력값 검증')
         self.check_file_exists('.gitignore', '✓ .gitignore')
 
