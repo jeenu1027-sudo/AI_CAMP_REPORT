@@ -203,21 +203,37 @@ class IndustryCrawler:
 
                 for curr in currencies:
                     if curr in rates_data:
-                        # KRW 기준으로 각 통화의 가격 계산
-                        rate = 1 / rates_data[curr]
+                        try:
+                            # exchangerate-api.com 응답 형식: rates[통화] = KRW당 통화값
+                            # 예: rates['USD'] = 0.00078 (KRW당 USD)
+                            # 역수를 취해 통화당 KRW 계산
+                            rate_value = rates_data[curr]
 
-                        if curr == 'JPY':
-                            rate = rate * 100  # 100엔 기준
+                            # 0 또는 음수 값 검증
+                            if rate_value <= 0:
+                                logger.warning(f"  ⚠ {curr} 환율 값이 유효하지 않음: {rate_value}")
+                                continue
 
-                        curr_display = f"{curr}(100엔)" if curr == 'JPY' else curr
-                        rates.append({
-                            'currency': curr_display,
-                            'rate': round(rate, 2),
-                            'change': '+0.0%',  # 변동률은 API에서 미제공
-                            'source': 'Exchange Rate API',
-                            'timestamp': datetime.now(JST).strftime('%Y-%m-%d %H:%M:%S')
-                        })
-                        logger.info(f"  ✓ {curr_display}: {rate:.2f} KRW")
+                            # 통화당 KRW 계산
+                            rate = 1 / rate_value
+
+                            # JPY는 100엔 기준으로 표시
+                            if curr == 'JPY':
+                                rate = rate * 100
+
+                            curr_display = f"{curr}(100엔)" if curr == 'JPY' else curr
+                            rates.append({
+                                'currency': curr_display,
+                                'rate': round(rate, 2),
+                                'change': '+0.0%',
+                                'source': 'Exchange Rate API',
+                                'timestamp': datetime.now(JST).strftime('%Y-%m-%d %H:%M:%S')
+                            })
+                            logger.info(f"  ✓ {curr_display}: {rate:.2f} KRW")
+
+                        except (ValueError, ZeroDivisionError) as e:
+                            logger.warning(f"  ⚠ {curr} 환율 계산 오류: {str(e)[:30]}")
+                            continue
 
                 return rates if rates else None
         except Exception as e:
@@ -445,7 +461,6 @@ class IndustryCrawler:
                     response = requests.get(url, timeout=5)
 
                     if response.status_code == 200:
-                        from xml.etree import ElementTree as ET
                         root = ET.fromstring(response.content)
                         item = root.find('.//item')
 
@@ -537,7 +552,6 @@ class IndustryCrawler:
                     response = requests.get(url, timeout=5)
 
                     if response.status_code == 200:
-                        from xml.etree import ElementTree as ET
                         root = ET.fromstring(response.content)
                         item = root.find('.//item')
 

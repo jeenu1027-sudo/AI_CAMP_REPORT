@@ -10,6 +10,7 @@ import logging
 from pathlib import Path
 import pytz
 from datetime import datetime
+import threading
 
 from crawler import IndustryCrawler
 from error_handler import error_metrics, health_check
@@ -30,11 +31,29 @@ JST = pytz.timezone('Asia/Tokyo')
 # APScheduler 설정
 scheduler = BackgroundScheduler(timezone=JST)
 
+# 동시성 제어 - 크롤링 작업 Lock
+_crawl_lock = threading.Lock()
+_is_crawling = False
+
 def scheduled_update():
-    """스케줄에 따라 실행되는 데이터 업데이트"""
-    logger.info(f"스케줄된 업데이트 실행: {datetime.now(JST).strftime('%Y-%m-%d %H:%M:%S %Z')}")
-    crawler = IndustryCrawler()
-    crawler.run()
+    """스케줄에 따라 실행되는 데이터 업데이트 (동시성 제어)"""
+    global _is_crawling
+
+    if not _crawl_lock.acquire(blocking=False):
+        logger.warning("⚠ 크롤링이 이미 진행 중이어서 스케줄 업데이트 스킵")
+        return
+
+    try:
+        _is_crawling = True
+        logger.info(f"스케줄된 업데이트 실행: {datetime.now(JST).strftime('%Y-%m-%d %H:%M:%S %Z')}")
+        crawler = IndustryCrawler()
+        crawler.run()
+        logger.info("✓ 스케줄 업데이트 완료")
+    except Exception as e:
+        logger.error(f"❌ 스케줄 업데이트 실패: {e}")
+    finally:
+        _is_crawling = False
+        _crawl_lock.release()
 
 @app.route('/')
 def index():
@@ -68,15 +87,38 @@ def get_data():
 
 @app.route('/api/update-now', methods=['POST'])
 def update_now():
-    """수동 업데이트"""
+    """수동 업데이트 (동시성 제어)"""
+    global _is_crawling
+
+    # Lock 획득 시도 (논블로킹)
+    if not _crawl_lock.acquire(blocking=False):
+        logger.warning("⚠ 이미 크롤링이 진행 중입니다")
+        return jsonify({
+            'status': '진행 중',
+            'message': '이미 데이터 업데이트가 진행 중입니다. 잠시 후 다시 시도해주세요'
+        }), 429  # Too Many Requests
+
     try:
+        _is_crawling = True
         logger.info("수동 업데이트 요청")
         crawler = IndustryCrawler()
         crawler.run()
-        return jsonify({'status': '성공', 'message': '데이터 업데이트 완료'})
+        logger.info("✓ 수동 업데이트 완료")
+        return jsonify({
+            'status': '성공',
+            'message': '데이터 업데이트 완료',
+            'timestamp': datetime.now(JST).isoformat()
+        })
     except Exception as e:
-        logger.error(f"수동 업데이트 실패: {e}")
-        return jsonify({'status': '실패', 'message': str(e)}), 500
+        logger.error(f"❌ 수동 업데이트 실패: {e}")
+        return jsonify({
+            'status': '실패',
+            'message': str(e),
+            'timestamp': datetime.now(JST).isoformat()
+        }), 500
+    finally:
+        _is_crawling = False
+        _crawl_lock.release()
 
 @app.route('/api/health')
 def health():

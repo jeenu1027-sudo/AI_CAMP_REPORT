@@ -9,7 +9,7 @@ from datetime import datetime
 import pytz
 import json
 from pathlib import Path
-from typing import Callable, Any, Dict, List
+from typing import Callable, Any, Dict, List, Tuple
 
 # 로깅 설정
 logger = logging.getLogger(__name__)
@@ -186,7 +186,7 @@ class ErrorMetrics:
 error_metrics = ErrorMetrics('error_metrics.json')
 
 # ===== 에러 분류 함수 =====
-def classify_error(error: Exception) -> tuple[str, str]:
+def classify_error(error: Exception) -> Tuple[str, str]:
     """
     예외를 에러 타입과 메시지로 분류
 
