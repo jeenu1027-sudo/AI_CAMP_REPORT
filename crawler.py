@@ -270,22 +270,27 @@ class IndustryCrawler:
             logger.error(f"철강뉴스 수집 중 오류: {e}")
             self.data['steel_news'] = self._get_sample_steel_news()
 
-    def _try_fetch_news_api(self, keyword):
+    @staticmethod
+    def _fetch_google_news_rss(keyword: str, max_items: int = 5) -> list:
         """
-        뉴스 API에서 뉴스 검색
-        시도: newsapi.org (무료 플랜) 또는 Google News
+        Google News RSS에서 뉴스 수집 (헬퍼 함수 - DRY 원칙)
+
+        Args:
+            keyword: 검색 키워드
+            max_items: 최대 수집 개수
+
+        Returns:
+            뉴스 리스트 또는 None
         """
         try:
-            # newsapi.org 사용 (무료 API KEY 필요)
-            # 현재는 Google News를 통한 크롤링으로 대체
             url = f"https://news.google.com/rss/search?q={keyword}&hl=ko&gl=KR"
-            response = requests.get(url, timeout=10)
+            response = requests.get(url, timeout=TimeoutConfig.NEWS_API_TIMEOUT)
 
             if response.status_code == 200:
                 root = ET.fromstring(response.content)
-
                 news_list = []
-                for item in root.findall('.//item')[:5]:  # 최대 5개
+
+                for item in root.findall('.//item')[:max_items]:
                     title = item.findtext('title')
                     link = item.findtext('link')
                     pubDate = item.findtext('pubDate')
@@ -301,10 +306,13 @@ class IndustryCrawler:
                         logger.info(f"  ✓ {title[:50]}")
 
                 return news_list if news_list else None
-
         except Exception as e:
-            logger.debug(f"뉴스 API 오류: {str(e)[:50]}")
+            logger.debug(f"Google News RSS 오류: {str(e)[:50]}")
             return None
+
+    def _try_fetch_news_api(self, keyword):
+        """뉴스 API에서 뉴스 검색"""
+        return self._fetch_google_news_rss(keyword, max_items=5)
 
     @staticmethod
     def _get_sample_steel_news():
@@ -364,7 +372,7 @@ class IndustryCrawler:
         try:
             # Google News RSS로 회사명 검색
             url = f"https://news.google.com/rss/search?q={company_name}&hl=ko&gl=KR"
-            response = requests.get(url, timeout=10)
+            response = requests.get(url, timeout=TimeoutConfig.NEWS_API_TIMEOUT)
 
             if response.status_code == 200:
                 root = ET.fromstring(response.content)
@@ -458,7 +466,7 @@ class IndustryCrawler:
             for keyword in keywords:
                 try:
                     url = f"https://news.google.com/rss/search?q={keyword}&hl=ko&gl=KR"
-                    response = requests.get(url, timeout=5)
+                    response = requests.get(url, timeout=TimeoutConfig.NEWS_API_TIMEOUT)
 
                     if response.status_code == 200:
                         root = ET.fromstring(response.content)
@@ -549,7 +557,7 @@ class IndustryCrawler:
             for keyword in keywords:
                 try:
                     url = f"https://news.google.com/rss/search?q={keyword} 정책&hl=ko&gl=KR"
-                    response = requests.get(url, timeout=5)
+                    response = requests.get(url, timeout=TimeoutConfig.NEWS_API_TIMEOUT)
 
                     if response.status_code == 200:
                         root = ET.fromstring(response.content)

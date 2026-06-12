@@ -91,6 +91,9 @@ def retry_with_backoff(
 class ErrorMetrics:
     """에러 메트릭 추적 및 통계"""
 
+    # 배치 저장 설정: 이 개수만큼 에러가 모이면 파일에 저장
+    BATCH_SAVE_COUNT = 10
+
     def __init__(self, log_file: str = 'error_metrics.json'):
         self.log_file = Path(log_file)
         self.metrics = {
@@ -98,9 +101,11 @@ class ErrorMetrics:
             'errors_by_type': {},
             'errors_by_source': {},
             'total_errors': 0,
+            'recovered_errors': 0,  # 복구된 에러 개수 (누적)
             'recovery_rate': 0.0,
             'error_details': []
         }
+        self._error_count_since_save = 0  # 마지막 저장 이후 에러 개수
         self._load_existing_metrics()
 
     def record_error(
@@ -125,6 +130,10 @@ class ErrorMetrics:
         # 전체 에러 수
         self.metrics['total_errors'] += 1
 
+        # 복구된 에러 카운트 (누적)
+        if is_recovered:
+            self.metrics['recovered_errors'] += 1
+
         # 상세 정보
         self.metrics['error_details'].append({
             'timestamp': datetime.now(JST).isoformat(),
@@ -139,20 +148,33 @@ class ErrorMetrics:
         if len(self.metrics['error_details']) > 100:
             self.metrics['error_details'] = self.metrics['error_details'][-100:]
 
-        # 복구율 계산
+        # 복구율 계산 (O(1) - 누적 카운트 사용)
         if self.metrics['total_errors'] > 0:
-            recovered = sum(1 for e in self.metrics['error_details'] if e['recovered'])
-            self.metrics['recovery_rate'] = (recovered / self.metrics['total_errors']) * 100
+            self.metrics['recovery_rate'] = (
+                self.metrics['recovered_errors'] / self.metrics['total_errors']
+            ) * 100
 
-        self.save_metrics()
+        # 배치 저장: BATCH_SAVE_COUNT개마다 파일에 저장
+        self._error_count_since_save += 1
+        if self._error_count_since_save >= self.BATCH_SAVE_COUNT:
+            self.save_metrics()
+            self._error_count_since_save = 0
 
-    def save_metrics(self):
-        """메트릭을 파일에 저장"""
+    def save_metrics(self, force: bool = False):
+        """
+        메트릭을 파일에 저장
+
+        Args:
+            force: True면 무조건 저장, False면 배치 도달 시에만 저장
+        """
         self.metrics['timestamp'] = datetime.now(JST).isoformat()
         try:
             with open(self.log_file, 'w', encoding='utf-8') as f:
                 json.dump(self.metrics, f, ensure_ascii=False, indent=2)
-            logger.debug(f"에러 메트릭 저장: {self.log_file}")
+            log_msg = f"에러 메트릭 저장 (배치): {self.log_file}"
+            if force:
+                log_msg = f"에러 메트릭 저장 (강제): {self.log_file}"
+            logger.debug(log_msg)
         except Exception as e:
             logger.error(f"메트릭 저장 실패: {str(e)}")
 
@@ -173,7 +195,10 @@ class ErrorMetrics:
                 logger.debug(f"기존 메트릭 로드 실패: {str(e)}")
 
     def get_summary(self) -> Dict[str, Any]:
-        """메트릭 요약"""
+        """메트릭 요약 (조회 시 강제 저장)"""
+        # 조회 시점에 메트릭 강제 저장 (API 응답으로 사용될 경우 보장)
+        self.save_metrics(force=True)
+
         return {
             'total_errors': self.metrics['total_errors'],
             'errors_by_type': self.metrics['errors_by_type'],
