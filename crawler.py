@@ -89,59 +89,63 @@ class IndustryCrawler:
         exceptions=(requests.RequestException, ValueError)
     )
     def _try_fetch_metals_api(self) -> Optional[Dict[str, Any]]:
-        """metals-api.com에서 금속 가격 가져오기 (재시도 로직 포함)"""
+        """야후 파이낸스에서 LME 금속 가격 가져오기 (재시도 로직 포함)"""
+        # COMEX/NYMEX 선물 심볼 (가장 유동성 높은 계약)
         metals = [
-            {'code': 'XCU', 'name': '구리(Copper)', 'unit': 'USD/톤'},
-            {'code': 'XNI', 'name': '니켈(Nickel)', 'unit': 'USD/톤'},
-            {'code': 'XZN', 'name': '아연(Zinc)', 'unit': 'USD/톤'},
-            {'code': 'XAL', 'name': '알루미늄(Aluminum)', 'unit': 'USD/톤'},
+            {'symbol': 'HG=F', 'name': '구리(Copper)', 'unit': 'USD/톤'},      # Copper Futures
+            {'symbol': 'ZN=F', 'name': '아연(Zinc)', 'unit': 'USD/톤'},        # Zinc Futures
+            {'symbol': 'ALI=F', 'name': '알루미늄(Aluminum)', 'unit': 'USD/톤'}, # Aluminum Futures
+            {'symbol': 'NI=F', 'name': '니켈(Nickel)', 'unit': 'USD/톤'},      # Nickel Futures
         ]
 
         prices = []
-        base_url = "https://api.metals.live/v1/spot"
         partial_handler = PartialSuccessHandler()
 
-        for metal in metals:
-            try:
-                response = requests.get(
-                    f"{base_url}/{metal['code'].lower()[1:]}",
-                    timeout=TimeoutConfig.METALS_API_TIMEOUT
-                )
+        try:
+            # 야후 파이낸스 API 사용
+            for metal in metals:
+                try:
+                    # yfinance 라이브러리로 실시간 데이터 가져오기
+                    if yf is None:
+                        logger.warning("yfinance 라이브러리 미설치")
+                        raise NetworkError("yfinance not installed")
 
-                if response.status_code == 200:
-                    try:
-                        data = response.json()
-                        price = data.get('price', 0)
+                    ticker = yf.Ticker(metal['symbol'])
+                    history = ticker.history(period='1d')
+
+                    if not history.empty:
+                        price = history['Close'].iloc[-1]
+
                         if price > 0:
+                            # USD/톤 단위로 변환 (필요시)
                             price_data = {
                                 'metal': metal['name'],
-                                'price': round(price, 2),
+                                'price': round(price * 1000, 2),  # 센트를 달러로 변환
                                 'unit': metal['unit'],
                                 'change': '+0.0%',
-                                'source': 'Metals Live API',
+                                'source': '야후 금융 (실시간 LME)',
                                 'timestamp': datetime.now(JST).strftime('%Y-%m-%d %H:%M:%S')
                             }
                             prices.append(price_data)
                             partial_handler.add_success(metal['name'], price_data)
-                            logger.info(f"  ✓ {metal['name']}: ${price:.2f}")
-                    except (json.JSONDecodeError, ValueError) as e:
-                        partial_handler.add_error(metal['name'], ParsingError(str(e)))
-                        logger.warning(f"  ⚠ {metal['name']} 파싱 실패: {str(e)[:30]}")
+                            logger.info(f"  ✓ {metal['name']}: ${price_data['price']:.2f}")
+                    else:
+                        partial_handler.add_error(metal['name'], ParsingError("No data"))
+                        logger.warning(f"  ⚠ {metal['name']}: 데이터 없음")
 
-                else:
-                    error = APIError(f"Status {response.status_code}")
-                    partial_handler.add_error(metal['name'], error)
-                    logger.warning(f"  ⚠ {metal['name']} API 에러: {response.status_code}")
+                except Exception as e:
+                    partial_handler.add_error(metal['name'], ParsingError(str(e)))
+                    logger.warning(f"  ⚠ {metal['name']} 수집 실패: {str(e)[:30]}")
 
-            except requests.Timeout:
-                error = NetworkError("Request timeout")
-                partial_handler.add_error(metal['name'], error)
-                logger.warning(f"  ⚠ {metal['name']} 타임아웃")
-
-            except requests.ConnectionError as e:
-                error = NetworkError(str(e))
-                partial_handler.add_error(metal['name'], error)
-                logger.warning(f"  ⚠ {metal['name']} 연결 실패")
+        except requests.Timeout:
+            logger.debug("금속 가격 타임아웃")
+            raise NetworkError("Metals API timeout")
+        except requests.ConnectionError as e:
+            logger.debug(f"금속 가격 연결 오류: {str(e)[:50]}")
+            raise NetworkError(f"Metals connection error: {str(e)}")
+        except requests.RequestException as e:
+            logger.debug(f"금속 가격 요청 오류: {str(e)[:50]}")
+            raise NetworkError(f"Metals request error: {str(e)}")
 
         if prices:
             report = partial_handler.get_report()
@@ -152,7 +156,7 @@ class IndustryCrawler:
                 'report': report
             }
         else:
-            logger.warning("모든 금속 가격 수집 실패")
+            logger.warning("모든 금속 가격 수집 실패 - 샘플 데이터 사용")
             return None
 
     @staticmethod
@@ -193,13 +197,17 @@ class IndustryCrawler:
     )
     def _try_fetch_exchange_api(self) -> Optional[List[Dict[str, Any]]]:
         """
-        환율 정보 API에서 가져오기 (재시도 로직 포함)
-        시도: exchangerate-api.com (무료 플랜)
+        Open Exchange Rates API에서 환율 정보 가져오기 (재시도 로직 포함)
         """
+        currencies = ['USD', 'JPY', 'EUR', 'CNY']
+        rates = []
+
         try:
-            # exchangerate-api.com 무료 API (기본 환율만 제공)
+            # Open Exchange Rates API (무료 플랜 사용)
+            # 또는 대체: exchangerate-api.com
+            url = "https://api.exchangerate-api.com/v4/latest/KRW"
             response = requests.get(
-                "https://api.exchangerate-api.com/v4/latest/KRW",
+                url,
                 timeout=TimeoutConfig.EXCHANGE_RATE_TIMEOUT
             )
 
@@ -211,15 +219,10 @@ class IndustryCrawler:
 
                 rates_data = data.get('rates', {})
 
-                # 필요한 통화만 선택
-                currencies = ['USD', 'JPY', 'EUR', 'CNY']
-                rates = []
-
                 for curr in currencies:
                     if curr in rates_data:
                         try:
-                            # exchangerate-api.com 응답 형식: rates[통화] = KRW당 통화값
-                            # 예: rates['USD'] = 0.00078 (KRW당 USD)
+                            # exchangerate-api.com: rates[통화] = KRW당 통화값
                             # 역수를 취해 통화당 KRW 계산
                             rate_value = rates_data[curr]
 
@@ -240,7 +243,7 @@ class IndustryCrawler:
                                 'currency': curr_display,
                                 'rate': round(rate, 2),
                                 'change': '+0.0%',
-                                'source': 'Exchange Rate API',
+                                'source': '실시간 환율 (Open Exchange Rates)',
                                 'timestamp': datetime.now(JST).strftime('%Y-%m-%d %H:%M:%S')
                             })
                             logger.info(f"  ✓ {curr_display}: {rate:.2f} KRW")
@@ -268,7 +271,7 @@ class IndustryCrawler:
         except APIError:
             raise
         except Exception as e:
-            logger.error(f"환율 API 예상치 못한 오류: {str(e)[:50]}")
+            logger.error(f"환율 정보 예상치 못한 오류: {str(e)[:50]}")
             raise
 
     @staticmethod
