@@ -508,10 +508,12 @@
 
             let html = '';
             news.forEach(n => {
+                const link = n.url ? `<a href="${n.url}" target="_blank" rel="noopener noreferrer" class="card-link">🔗 DART 공시 조회</a>` : '';
                 html += `<div class="card">
                     <div class="card-title">🏢 ${n.company}</div>
-                    <div class="card-meta">📅 ${n.date} | 📰 ${n.source}</div>
+                    <div class="card-meta">📅 ${n.date} | 📰 ${n.source}${n.disclosure_type ? ' | ' + n.disclosure_type : ''}</div>
                     <div class="card-content">${n.title}</div>
+                    ${link}
                 </div>`;
             });
             content.innerHTML = html;
@@ -528,10 +530,12 @@
             let html = '';
             market.forEach(m => {
                 const badgeClass = m.impact === '긍정적' ? 'badge-positive' : 'badge-negative';
+                const link = m.url ? `<a href="${m.url}" target="_blank" rel="noopener noreferrer" class="card-link">🔗 ${m.source} 조회</a>` : '';
                 html += `<div class="card">
                     <div class="card-title">📊 ${m.sector}</div>
-                    <div class="card-meta">📅 ${m.date} | <span class="badge ${badgeClass}">${m.impact}</span></div>
+                    <div class="card-meta">📅 ${m.date} | <span class="badge ${badgeClass}">${m.impact}</span>${m.source ? ' | ' + m.source : ''}</div>
                     <div class="card-content">${m.info}</div>
+                    ${link}
                 </div>`;
             });
             content.innerHTML = html;

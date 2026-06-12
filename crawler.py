@@ -250,21 +250,21 @@ class IndustryCrawler:
                 'title': '철강업계, 상반기 호실적으로 영업이익 33% 증가',
                 'source': '한국경제',
                 'date': datetime.now(JST).strftime('%Y-%m-%d'),
-                'url': '#',
+                'url': 'https://www.hankyung.com',
                 'summary': '철강 수요 회복으로 주요 철강사들이 긍정적 실적 발표'
             },
             {
                 'title': '선재 시장, 중국산 저가 제품 경쟁 심화',
                 'source': '철강신문',
                 'date': datetime.now(JST).strftime('%Y-%m-%d'),
-                'url': '#',
+                'url': 'https://www.steelnews.kr',
                 'summary': '국내 선재 생산업체들의 가격 압박 우려'
             },
             {
                 'title': '전기차 관련 특수강선 수요 증가',
                 'source': '매일경제',
                 'date': datetime.now(JST).strftime('%Y-%m-%d'),
-                'url': '#',
+                'url': 'https://www.mk.co.kr',
                 'summary': '전기차 산업 성장에 따른 신규 수요 창출'
             },
         ]
@@ -328,31 +328,39 @@ class IndustryCrawler:
 
     @staticmethod
     def _get_sample_competitor_news():
-        """샘플 경쟁사 뉴스 데이터"""
+        """샘플 경쟁사 뉴스 데이터 (DART 공시 정보)"""
         return [
             {
                 'company': '고려제강',
-                'title': '2024년 상반기 매출 500억원 달성',
+                'title': '2024년 상반기 영업실적 공시',
                 'date': datetime.now(JST).strftime('%Y-%m-%d'),
-                'source': '보도자료',
+                'source': '전자공시(DART)',
+                'disclosure_type': '영업실적',
+                'url': 'https://dart.fss.or.kr'
             },
             {
                 'company': '한국선재',
-                'title': '신규 생산라인 가동 개시',
+                'title': '신규 설비투자 계획 공고',
                 'date': datetime.now(JST).strftime('%Y-%m-%d'),
-                'source': '뉴스',
+                'source': '전자공시(DART)',
+                'disclosure_type': '주요사항보고',
+                'url': 'https://dart.fss.or.kr'
             },
             {
                 'company': '만호제강',
-                'title': '수출물량 전년비 15% 증가',
+                'title': '분기 매출액 및 영업이익 공시',
                 'date': datetime.now(JST).strftime('%Y-%m-%d'),
-                'source': '보도자료',
+                'source': '전자공시(DART)',
+                'disclosure_type': '영업실적',
+                'url': 'https://dart.fss.or.kr'
             },
             {
                 'company': '동일제강',
-                'title': '특수강 부문 기술력 강화',
+                'title': '신기술 개발 관련 공시',
                 'date': datetime.now(JST).strftime('%Y-%m-%d'),
-                'source': '뉴스',
+                'source': '전자공시(DART)',
+                'disclosure_type': '주요사항보고',
+                'url': 'https://dart.fss.or.kr'
             },
         ]
 
@@ -418,25 +426,33 @@ class IndustryCrawler:
                 'sector': '자동차',
                 'info': '상반기 국내 자동차 생산 12% 증가',
                 'impact': '긍정적',
-                'date': datetime.now(JST).strftime('%Y-%m-%d')
+                'date': datetime.now(JST).strftime('%Y-%m-%d'),
+                'url': 'https://kosis.kr',
+                'source': '통계청'
             },
             {
                 'sector': '건설/토목',
                 'info': '정부 인프라 투자 확대 계획 발표',
                 'impact': '긍정적',
-                'date': datetime.now(JST).strftime('%Y-%m-%d')
+                'date': datetime.now(JST).strftime('%Y-%m-%d'),
+                'url': 'https://www.molit.go.kr',
+                'source': '국토교통부'
             },
             {
                 'sector': '전자/가전',
                 'info': '반도체 수요 회복세 계속',
                 'impact': '긍정적',
-                'date': datetime.now(JST).strftime('%Y-%m-%d')
+                'date': datetime.now(JST).strftime('%Y-%m-%d'),
+                'url': 'https://www.kitas.or.kr',
+                'source': '반도체산업협회'
             },
             {
                 'sector': '전력선/선재',
                 'info': '신재생에너지 인프라 투자 확대',
                 'impact': '긍정적',
-                'date': datetime.now(JST).strftime('%Y-%m-%d')
+                'date': datetime.now(JST).strftime('%Y-%m-%d'),
+                'url': 'https://www.kemco.or.kr',
+                'source': '한국에너지공단'
             },
         ]
 

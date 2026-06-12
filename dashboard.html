@@ -498,24 +498,27 @@
             "competitor_news": [
                 {
                     "company": "고려제강",
-                    "title": "2024년 상반기 매출 500억원 달성",
+                    "title": "2024년 상반기 영업실적 공시",
                     "date": new Date().toISOString().split('T')[0],
-                    "source": "보도자료",
-                    "url": "https://www.koryosteelco.com"
+                    "source": "전자공시(DART)",
+                    "disclosure_type": "영업실적",
+                    "url": "https://dart.fss.or.kr"
                 },
                 {
                     "company": "한국선재",
-                    "title": "신규 생산라인 가동 개시",
+                    "title": "신규 설비투자 계획 공고",
                     "date": new Date().toISOString().split('T')[0],
-                    "source": "뉴스",
-                    "url": "https://www.koreawirerod.com"
+                    "source": "전자공시(DART)",
+                    "disclosure_type": "주요사항보고",
+                    "url": "https://dart.fss.or.kr"
                 },
                 {
                     "company": "만호제강",
-                    "title": "수출물량 전년비 15% 증가",
+                    "title": "분기 매출액 및 영업이익 공시",
                     "date": new Date().toISOString().split('T')[0],
-                    "source": "보도자료",
-                    "url": "https://www.manhosteeel.com"
+                    "source": "전자공시(DART)",
+                    "disclosure_type": "영업실적",
+                    "url": "https://dart.fss.or.kr"
                 }
             ],
             "market_info": [
@@ -523,19 +526,33 @@
                     "sector": "자동차",
                     "info": "상반기 국내 자동차 생산 12% 증가",
                     "impact": "긍정적",
-                    "date": new Date().toISOString().split('T')[0]
+                    "date": new Date().toISOString().split('T')[0],
+                    "source": "통계청",
+                    "url": "https://kosis.kr"
                 },
                 {
                     "sector": "건설/토목",
                     "info": "정부 인프라 투자 확대 계획 발표",
                     "impact": "긍정적",
-                    "date": new Date().toISOString().split('T')[0]
+                    "date": new Date().toISOString().split('T')[0],
+                    "source": "국토교통부",
+                    "url": "https://www.molit.go.kr"
                 },
                 {
                     "sector": "전자/가전",
                     "info": "반도체 수요 회복세 계속",
                     "impact": "긍정적",
-                    "date": new Date().toISOString().split('T')[0]
+                    "date": new Date().toISOString().split('T')[0],
+                    "source": "반도체산업협회",
+                    "url": "https://www.kitas.or.kr"
+                },
+                {
+                    "sector": "전력선/선재",
+                    "info": "신재생에너지 인프라 투자 확대",
+                    "impact": "긍정적",
+                    "date": new Date().toISOString().split('T')[0],
+                    "source": "한국에너지공단",
+                    "url": "https://www.kemco.or.kr"
                 }
             ],
             "policy_news": [
@@ -650,11 +667,12 @@
 
             let html = '';
             news.forEach(n => {
+                const link = n.url ? `<a href="${n.url}" target="_blank" rel="noopener noreferrer" class="card-link">🔗 DART 공시 조회</a>` : '';
                 html += `<div class="card">
                     <div class="card-title">🏢 ${n.company}</div>
-                    <div class="card-meta">📅 ${n.date} | 📰 ${n.source}</div>
+                    <div class="card-meta">📅 ${n.date} | 📰 ${n.source}${n.disclosure_type ? ' | ' + n.disclosure_type : ''}</div>
                     <div class="card-content">${n.title}</div>
-                    <a href="${n.url}" target="_blank" rel="noopener noreferrer" class="card-link">🔗 회사 사이트</a>
+                    ${link}
                 </div>`;
             });
             content.innerHTML = html;
@@ -671,10 +689,12 @@
             let html = '';
             market.forEach(m => {
                 const badgeClass = m.impact === '긍정적' ? 'badge-positive' : 'badge-negative';
+                const link = m.url ? `<a href="${m.url}" target="_blank" rel="noopener noreferrer" class="card-link">🔗 ${m.source} 조회</a>` : '';
                 html += `<div class="card">
                     <div class="card-title">📊 ${m.sector}</div>
-                    <div class="card-meta">📅 ${m.date} | <span class="badge ${badgeClass}">${m.impact}</span></div>
+                    <div class="card-meta">📅 ${m.date} | <span class="badge ${badgeClass}">${m.impact}</span>${m.source ? ' | ' + m.source : ''}</div>
                     <div class="card-content">${m.info}</div>
+                    ${link}
                 </div>`;
             });
             content.innerHTML = html;
