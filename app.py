@@ -12,6 +12,7 @@ import pytz
 from datetime import datetime
 
 from crawler import IndustryCrawler
+from error_handler import error_metrics, health_check
 
 # 로깅 설정
 logging.basicConfig(
@@ -76,6 +77,23 @@ def update_now():
     except Exception as e:
         logger.error(f"수동 업데이트 실패: {e}")
         return jsonify({'status': '실패', 'message': str(e)}), 500
+
+@app.route('/api/health')
+def health():
+    """헬스 체크"""
+    health_status = health_check()
+    status_code = 200 if health_status['status'] == 'healthy' else 503
+    return jsonify(health_status), status_code
+
+@app.route('/api/error-metrics')
+def error_metrics_endpoint():
+    """에러 메트릭 조회"""
+    metrics = error_metrics.get_summary()
+    return jsonify({
+        'status': 'success',
+        'metrics': metrics,
+        'timestamp': datetime.now(JST).isoformat()
+    })
 
 @app.route('/api/schedule-info')
 def schedule_info():
