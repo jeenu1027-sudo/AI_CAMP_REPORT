@@ -1,0 +1,698 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>철강산업 정보 대시보드</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            padding: 20px;
+        }
+
+        .container {
+            max-width: 1400px;
+            margin: 0 auto;
+        }
+
+        header {
+            background: white;
+            border-radius: 10px;
+            padding: 30px;
+            margin-bottom: 30px;
+            box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+        }
+
+        header h1 {
+            color: #333;
+            font-size: 2.5em;
+            margin-bottom: 10px;
+        }
+
+        .header-info {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            flex-wrap: wrap;
+            gap: 20px;
+        }
+
+        .update-info {
+            font-size: 0.9em;
+            color: #666;
+        }
+
+        .update-time {
+            color: #667eea;
+            font-weight: bold;
+        }
+
+        .btn-group {
+            display: flex;
+            gap: 10px;
+        }
+
+        button {
+            padding: 10px 20px;
+            border: none;
+            border-radius: 5px;
+            cursor: pointer;
+            font-size: 1em;
+            transition: all 0.3s ease;
+        }
+
+        .btn-primary {
+            background: #667eea;
+            color: white;
+        }
+
+        .btn-primary:hover {
+            background: #5568d3;
+            transform: translateY(-2px);
+            box-shadow: 0 4px 12px rgba(102, 126, 234, 0.4);
+        }
+
+        .btn-secondary {
+            background: #f0f0f0;
+            color: #333;
+        }
+
+        .btn-secondary:hover {
+            background: #e0e0e0;
+        }
+
+        /* 탭 스타일 */
+        .tabs {
+            display: flex;
+            gap: 10px;
+            margin-bottom: 20px;
+            flex-wrap: wrap;
+            background: white;
+            padding: 15px;
+            border-radius: 10px;
+            box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+        }
+
+        .tab-btn {
+            padding: 10px 20px;
+            border: 2px solid #ddd;
+            background: white;
+            border-radius: 5px;
+            cursor: pointer;
+            transition: all 0.3s ease;
+            font-weight: 500;
+        }
+
+        .tab-btn.active {
+            background: #667eea;
+            color: white;
+            border-color: #667eea;
+        }
+
+        .tab-btn:hover {
+            border-color: #667eea;
+        }
+
+        /* 콘텐츠 영역 */
+        .content {
+            background: white;
+            border-radius: 10px;
+            padding: 30px;
+            box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+        }
+
+        .tab-content {
+            display: none;
+        }
+
+        .tab-content.active {
+            display: block;
+            animation: fadeIn 0.3s ease;
+        }
+
+        @keyframes fadeIn {
+            from { opacity: 0; }
+            to { opacity: 1; }
+        }
+
+        /* 로딩 상태 */
+        .loading {
+            text-align: center;
+            padding: 40px;
+            color: #666;
+        }
+
+        .spinner {
+            border: 4px solid #f3f3f3;
+            border-top: 4px solid #667eea;
+            border-radius: 50%;
+            width: 40px;
+            height: 40px;
+            animation: spin 1s linear infinite;
+            margin: 0 auto 20px;
+        }
+
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+
+        /* 카드 스타일 */
+        .card {
+            background: #f9f9f9;
+            border-left: 4px solid #667eea;
+            padding: 20px;
+            margin-bottom: 20px;
+            border-radius: 5px;
+            transition: all 0.3s ease;
+        }
+
+        .card:hover {
+            box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
+            transform: translateY(-2px);
+        }
+
+        .card-title {
+            font-size: 1.1em;
+            font-weight: bold;
+            color: #333;
+            margin-bottom: 8px;
+        }
+
+        .card-meta {
+            font-size: 0.85em;
+            color: #888;
+            margin-bottom: 10px;
+        }
+
+        .card-content {
+            color: #555;
+            line-height: 1.6;
+            margin-bottom: 10px;
+        }
+
+        .card-link {
+            display: inline-block;
+            color: #667eea;
+            text-decoration: none;
+            font-weight: 500;
+            border-bottom: 2px solid transparent;
+            transition: all 0.3s ease;
+        }
+
+        .card-link:hover {
+            border-bottom-color: #667eea;
+        }
+
+        /* 가격/통계 테이블 */
+        table {
+            width: 100%;
+            border-collapse: collapse;
+            margin-bottom: 20px;
+        }
+
+        table thead {
+            background: #f0f0f0;
+        }
+
+        table th {
+            padding: 12px;
+            text-align: left;
+            font-weight: 600;
+            color: #333;
+            border-bottom: 2px solid #ddd;
+        }
+
+        table td {
+            padding: 12px;
+            border-bottom: 1px solid #eee;
+            color: #555;
+        }
+
+        table tbody tr:hover {
+            background: #f9f9f9;
+        }
+
+        .price-up {
+            color: #e74c3c;
+            font-weight: bold;
+        }
+
+        .price-down {
+            color: #27ae60;
+            font-weight: bold;
+        }
+
+        .badge {
+            display: inline-block;
+            padding: 4px 12px;
+            border-radius: 20px;
+            font-size: 0.8em;
+            font-weight: 600;
+        }
+
+        .badge-positive {
+            background: #d4edda;
+            color: #155724;
+        }
+
+        .badge-negative {
+            background: #f8d7da;
+            color: #721c24;
+        }
+
+        /* 에러 메시지 */
+        .error {
+            background: #f8d7da;
+            border: 1px solid #f5c6cb;
+            color: #721c24;
+            padding: 20px;
+            border-radius: 5px;
+            margin: 20px 0;
+        }
+
+        .success {
+            background: #d4edda;
+            border: 1px solid #c3e6cb;
+            color: #155724;
+            padding: 20px;
+            border-radius: 5px;
+            margin: 20px 0;
+        }
+
+        /* 반응형 디자인 */
+        @media (max-width: 768px) {
+            header h1 {
+                font-size: 1.8em;
+            }
+
+            .header-info {
+                flex-direction: column;
+                align-items: flex-start;
+            }
+
+            .tabs {
+                gap: 5px;
+            }
+
+            .tab-btn {
+                padding: 8px 15px;
+                font-size: 0.9em;
+            }
+
+            table {
+                font-size: 0.9em;
+            }
+
+            table th, table td {
+                padding: 8px;
+            }
+        }
+
+        footer {
+            text-align: center;
+            margin-top: 40px;
+            color: white;
+            font-size: 0.9em;
+        }
+
+        .no-data {
+            text-align: center;
+            padding: 40px;
+            color: #999;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <header>
+            <h1>📊 철강산업 정보 대시보드</h1>
+            <div class="header-info">
+                <div class="update-info">
+                    마지막 업데이트: <span class="update-time" id="updateTime">로딩 중...</span>
+                </div>
+                <div class="btn-group">
+                    <button class="btn-secondary" onclick="location.reload()">새로고침</button>
+                </div>
+            </div>
+        </header>
+
+        <!-- 탭 네비게이션 -->
+        <div class="tabs">
+            <button class="tab-btn active" onclick="switchTab('lme', event)">💰 LME 가격</button>
+            <button class="tab-btn" onclick="switchTab('rates', event)">💱 환율</button>
+            <button class="tab-btn" onclick="switchTab('steel-news', event)">📰 철강뉴스</button>
+            <button class="tab-btn" onclick="switchTab('competitors', event)">🏢 경쟁사</button>
+            <button class="tab-btn" onclick="switchTab('market', event)">📈 시장정보</button>
+            <button class="tab-btn" onclick="switchTab('policy', event)">📋 정책</button>
+        </div>
+
+        <!-- 콘텐츠 영역 -->
+        <div class="content">
+            <!-- LME 가격 탭 -->
+            <div id="lme" class="tab-content active">
+                <h2>📊 LME 금속가격</h2>
+                <div id="lme-content"></div>
+            </div>
+
+            <!-- 환율 탭 -->
+            <div id="rates" class="tab-content">
+                <h2>💱 환율정보</h2>
+                <div id="rates-content"></div>
+            </div>
+
+            <!-- 철강뉴스 탭 -->
+            <div id="steel-news" class="tab-content">
+                <h2>📰 철강/선재 뉴스</h2>
+                <div id="steel-news-content"></div>
+            </div>
+
+            <!-- 경쟁사 탭 -->
+            <div id="competitors" class="tab-content">
+                <h2>🏢 경쟁사 뉴스</h2>
+                <div id="competitors-content"></div>
+            </div>
+
+            <!-- 시장정보 탭 -->
+            <div id="market" class="tab-content">
+                <h2>📈 시장정보</h2>
+                <div id="market-content"></div>
+            </div>
+
+            <!-- 정책 탭 -->
+            <div id="policy" class="tab-content">
+                <h2>📋 철강 정책정보</h2>
+                <div id="policy-content"></div>
+            </div>
+        </div>
+
+        <footer>
+            <p>업무 관련 최신정보 자동수집 대시보드</p>
+        </footer>
+    </div>
+
+    <script>
+        // 탭 전환
+        function switchTab(tabName, event) {
+            if (event) {
+                event.preventDefault();
+            }
+
+            // 모든 탭 콘텐츠 숨기기
+            document.querySelectorAll('.tab-content').forEach(tab => {
+                tab.classList.remove('active');
+            });
+
+            // 모든 탭 버튼 비활성화
+            document.querySelectorAll('.tab-btn').forEach(btn => {
+                btn.classList.remove('active');
+            });
+
+            // 선택한 탭 표시
+            document.getElementById(tabName).classList.add('active');
+            event.target.classList.add('active');
+        }
+
+        // 샘플 데이터 (실제 운영 시 API에서 가져오기)
+        const sampleData = {
+            "updated_at": new Date().toISOString(),
+            "lme_prices": [
+                {
+                    "metal": "구리(Copper)",
+                    "price": 9850,
+                    "unit": "USD/톤",
+                    "change": "+1.2%",
+                    "source": "LME",
+                    "timestamp": new Date().toLocaleString('ko-KR')
+                },
+                {
+                    "metal": "니켈(Nickel)",
+                    "price": 16500,
+                    "unit": "USD/톤",
+                    "change": "-0.5%",
+                    "source": "LME",
+                    "timestamp": new Date().toLocaleString('ko-KR')
+                },
+                {
+                    "metal": "아연(Zinc)",
+                    "price": 2720,
+                    "unit": "USD/톤",
+                    "change": "+2.1%",
+                    "source": "LME",
+                    "timestamp": new Date().toLocaleString('ko-KR')
+                },
+                {
+                    "metal": "알루미늄(Aluminum)",
+                    "price": 2380,
+                    "unit": "USD/톤",
+                    "change": "+0.8%",
+                    "source": "LME",
+                    "timestamp": new Date().toLocaleString('ko-KR')
+                }
+            ],
+            "exchange_rates": [
+                { "currency": "USD", "rate": 1298.50, "change": "+0.2%", "source": "Exchange Rate API" },
+                { "currency": "JPY(100엔)", "rate": 948.30, "change": "-0.1%", "source": "Exchange Rate API" },
+                { "currency": "EUR", "rate": 1410.20, "change": "+0.5%", "source": "Exchange Rate API" },
+                { "currency": "CNY", "rate": 179.50, "change": "+0.3%", "source": "Exchange Rate API" }
+            ],
+            "steel_news": [
+                {
+                    "title": "철강업계, 상반기 호실적으로 영업이익 33% 증가",
+                    "source": "한국경제",
+                    "date": new Date().toISOString().split('T')[0],
+                    "url": "https://www.hankyung.com",
+                    "summary": "철강 수요 회복으로 주요 철강사들이 긍정적 실적 발표"
+                },
+                {
+                    "title": "선재 시장, 중국산 저가 제품 경쟁 심화",
+                    "source": "철강신문",
+                    "date": new Date().toISOString().split('T')[0],
+                    "url": "https://www.steelnews.kr",
+                    "summary": "국내 선재 생산업체들의 가격 압박 우려"
+                },
+                {
+                    "title": "전기차 관련 특수강선 수요 증가",
+                    "source": "매일경제",
+                    "date": new Date().toISOString().split('T')[0],
+                    "url": "https://www.mk.co.kr",
+                    "summary": "전기차 산업 성장에 따른 신규 수요 창출"
+                }
+            ],
+            "competitor_news": [
+                {
+                    "company": "고려제강",
+                    "title": "2024년 상반기 매출 500억원 달성",
+                    "date": new Date().toISOString().split('T')[0],
+                    "source": "보도자료",
+                    "url": "https://www.koryosteelco.com"
+                },
+                {
+                    "company": "한국선재",
+                    "title": "신규 생산라인 가동 개시",
+                    "date": new Date().toISOString().split('T')[0],
+                    "source": "뉴스",
+                    "url": "https://www.koreawirerod.com"
+                },
+                {
+                    "company": "만호제강",
+                    "title": "수출물량 전년비 15% 증가",
+                    "date": new Date().toISOString().split('T')[0],
+                    "source": "보도자료",
+                    "url": "https://www.manhosteeel.com"
+                }
+            ],
+            "market_info": [
+                {
+                    "sector": "자동차",
+                    "info": "상반기 국내 자동차 생산 12% 증가",
+                    "impact": "긍정적",
+                    "date": new Date().toISOString().split('T')[0]
+                },
+                {
+                    "sector": "건설/토목",
+                    "info": "정부 인프라 투자 확대 계획 발표",
+                    "impact": "긍정적",
+                    "date": new Date().toISOString().split('T')[0]
+                },
+                {
+                    "sector": "전자/가전",
+                    "info": "반도체 수요 회복세 계속",
+                    "impact": "긍정적",
+                    "date": new Date().toISOString().split('T')[0]
+                }
+            ],
+            "policy_news": [
+                {
+                    "title": "철강산업 기술혁신 지원 사업 신청 접수",
+                    "source": "산업통상자원부",
+                    "date": new Date().toISOString().split('T')[0],
+                    "content": "친환경 철강 기술개발 지원",
+                    "url": "https://www.motie.go.kr"
+                },
+                {
+                    "title": "수소환원제철 실증 프로젝트 추진",
+                    "source": "정부정책",
+                    "date": new Date().toISOString().split('T')[0],
+                    "content": "2030년까지 수소환원제철 상용화 목표",
+                    "url": "https://www.motie.go.kr"
+                }
+            ]
+        };
+
+        // 데이터 렌더링
+        function renderData(data) {
+            // 업데이트 시간 표시
+            const updateTime = new Date(data.updated_at);
+            document.getElementById('updateTime').textContent =
+                updateTime.toLocaleString('ko-KR');
+
+            // 각 탭에 데이터 표시
+            renderLMEPrices(data.lme_prices);
+            renderExchangeRates(data.exchange_rates);
+            renderSteelNews(data.steel_news);
+            renderCompetitorNews(data.competitor_news);
+            renderMarketInfo(data.market_info);
+            renderPolicyNews(data.policy_news);
+        }
+
+        // LME 가격 렌더링
+        function renderLMEPrices(prices) {
+            const content = document.getElementById('lme-content');
+            if (!prices || prices.length === 0) {
+                content.innerHTML = '<div class="no-data">데이터가 없습니다</div>';
+                return;
+            }
+
+            let html = '<table><thead><tr><th>금속</th><th>가격</th><th>단위</th><th>변동</th><th>출처</th></tr></thead><tbody>';
+            prices.forEach(p => {
+                const changeClass = p.change.includes('-') ? 'price-down' : 'price-up';
+                html += `<tr>
+                    <td>${p.metal}</td>
+                    <td>${p.price.toLocaleString()}</td>
+                    <td>${p.unit}</td>
+                    <td class="${changeClass}">${p.change}</td>
+                    <td>${p.source}</td>
+                </tr>`;
+            });
+            html += '</tbody></table>';
+            content.innerHTML = html;
+        }
+
+        // 환율 렌더링
+        function renderExchangeRates(rates) {
+            const content = document.getElementById('rates-content');
+            if (!rates || rates.length === 0) {
+                content.innerHTML = '<div class="no-data">데이터가 없습니다</div>';
+                return;
+            }
+
+            let html = '<table><thead><tr><th>통화</th><th>환율</th><th>변동</th><th>출처</th></tr></thead><tbody>';
+            rates.forEach(r => {
+                const changeClass = r.change.includes('-') ? 'price-down' : 'price-up';
+                html += `<tr>
+                    <td>${r.currency}</td>
+                    <td>${r.rate.toLocaleString()}</td>
+                    <td class="${changeClass}">${r.change}</td>
+                    <td>${r.source}</td>
+                </tr>`;
+            });
+            html += '</tbody></table>';
+            content.innerHTML = html;
+        }
+
+        // 철강뉴스 렌더링
+        function renderSteelNews(news) {
+            const content = document.getElementById('steel-news-content');
+            if (!news || news.length === 0) {
+                content.innerHTML = '<div class="no-data">뉴스가 없습니다</div>';
+                return;
+            }
+
+            let html = '';
+            news.forEach(n => {
+                html += `<div class="card">
+                    <div class="card-title">${n.title}</div>
+                    <div class="card-meta">📅 ${n.date} | 📰 ${n.source}</div>
+                    <div class="card-content">${n.summary}</div>
+                    <a href="${n.url}" target="_blank" rel="noopener noreferrer" class="card-link">🔗 원문 읽기</a>
+                </div>`;
+            });
+            content.innerHTML = html;
+        }
+
+        // 경쟁사 뉴스 렌더링
+        function renderCompetitorNews(news) {
+            const content = document.getElementById('competitors-content');
+            if (!news || news.length === 0) {
+                content.innerHTML = '<div class="no-data">뉴스가 없습니다</div>';
+                return;
+            }
+
+            let html = '';
+            news.forEach(n => {
+                html += `<div class="card">
+                    <div class="card-title">🏢 ${n.company}</div>
+                    <div class="card-meta">📅 ${n.date} | 📰 ${n.source}</div>
+                    <div class="card-content">${n.title}</div>
+                    <a href="${n.url}" target="_blank" rel="noopener noreferrer" class="card-link">🔗 회사 사이트</a>
+                </div>`;
+            });
+            content.innerHTML = html;
+        }
+
+        // 시장정보 렌더링
+        function renderMarketInfo(market) {
+            const content = document.getElementById('market-content');
+            if (!market || market.length === 0) {
+                content.innerHTML = '<div class="no-data">정보가 없습니다</div>';
+                return;
+            }
+
+            let html = '';
+            market.forEach(m => {
+                const badgeClass = m.impact === '긍정적' ? 'badge-positive' : 'badge-negative';
+                html += `<div class="card">
+                    <div class="card-title">📊 ${m.sector}</div>
+                    <div class="card-meta">📅 ${m.date} | <span class="badge ${badgeClass}">${m.impact}</span></div>
+                    <div class="card-content">${m.info}</div>
+                </div>`;
+            });
+            content.innerHTML = html;
+        }
+
+        // 정책정보 렌더링
+        function renderPolicyNews(policy) {
+            const content = document.getElementById('policy-content');
+            if (!policy || policy.length === 0) {
+                content.innerHTML = '<div class="no-data">정책정보가 없습니다</div>';
+                return;
+            }
+
+            let html = '';
+            policy.forEach(p => {
+                html += `<div class="card">
+                    <div class="card-title">${p.title}</div>
+                    <div class="card-meta">📅 ${p.date} | 📰 ${p.source}</div>
+                    <div class="card-content">${p.content}</div>
+                    <a href="${p.url}" target="_blank" rel="noopener noreferrer" class="card-link">🔗 정책 보기</a>
+                </div>`;
+            });
+            content.innerHTML = html;
+        }
+
+        // 페이지 로드 시 데이터 표시
+        window.addEventListener('load', function() {
+            renderData(sampleData);
+        });
+    </script>
+</body>
+</html>
