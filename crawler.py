@@ -3,6 +3,7 @@
 매일 8시(JST)에 실행되어 최신 정보를 data.json에 저장
 """
 import json
+import os
 import requests
 from bs4 import BeautifulSoup
 from datetime import datetime, timedelta
@@ -12,10 +13,6 @@ import logging
 from xml.etree import ElementTree as ET
 from typing import Optional, List, Dict, Any
 from email.utils import parsedate_to_datetime
-try:
-    import yfinance as yf
-except:
-    yf = None
 
 # 에러 처리 모듈 임포트
 from error_handler import (
@@ -56,275 +53,189 @@ class IndustryCrawler:
 
     def fetch_lme_prices(self) -> None:
         """
-        LME 비철금속가격 수집 (부분 성공 추적)
-        실제 데이터: metals-api.com 또는 Yahoo Finance
-        폴백: 샘플 데이터
+        LME 비철금속가격 수집
+        출처: 네이버 금융 비철금속 탭 스크래핑
+        https://finance.naver.com/marketindex/?tabSel=materials#tab_section
         """
+        logger.info("LME 비철금속가격 수집 중...")
         try:
-            logger.info("LME 비철금속가격 수집 중...")
-            result = self._try_fetch_metals_api()
-
-            if result is None:
-                logger.warning("⚠ API 연결 실패 - 샘플 데이터 사용")
-                prices = self._get_sample_lme_prices()
-            else:
-                # 부분 성공 처리
-                prices = result.get('prices', []) if isinstance(result, dict) else result
-                if isinstance(result, dict) and 'report' in result:
-                    report = result['report']
-                    logger.info(f"부분 성공: {report['successful']}/{report['successful'] + report['failed']}개 수집 "
-                              f"({report['success_rate']:.0f}%)")
-
-            self.data['lme_prices'] = prices
+            prices = self._scrape_naver_metals()
             if prices:
-                logger.info(f"✓ LME 비철금속가격 {len(prices)}개 로드 완료 (출처: {prices[0].get('source', 'Unknown')})")
-
+                self.data['lme_prices'] = prices
+                logger.info(f"✓ LME 비철금속가격 {len(prices)}개 로드 완료 (출처: 네이버 금융)")
+            else:
+                logger.warning("⚠ 네이버 금융 스크래핑 실패 - 샘플 데이터 사용")
+                self.data['lme_prices'] = self._get_sample_lme_prices()
         except Exception as e:
             logger.error(f"❌ LME 비철금속가격 수집 중 오류: {e}")
             self.data['lme_prices'] = self._get_sample_lme_prices()
 
-    @retry_with_backoff(
-        max_retries=2,
-        initial_delay=1.0,
-        backoff_factor=2.0,
-        exceptions=(requests.RequestException, ValueError)
-    )
-    def _try_fetch_metals_api(self) -> Optional[Dict[str, Any]]:
-        """Metals Live API에서 LME 금속 가격 가져오기 (재시도 로직 포함)"""
-        metals = [
-            {'code': 'CU', 'name': '구리(Copper)', 'unit': 'USD/톤'},
-            {'code': 'NI', 'name': '니켈(Nickel)', 'unit': 'USD/톤'},
-            {'code': 'ZN', 'name': '아연(Zinc)', 'unit': 'USD/톤'},
-            {'code': 'AL', 'name': '알루미늄(Aluminum)', 'unit': 'USD/톤'},
-        ]
-
-        prices = []
-        partial_handler = PartialSuccessHandler()
-
+    def _scrape_naver_metals(self) -> Optional[List[Dict[str, Any]]]:
+        """
+        네이버 금융 비철금속 탭에서 LME 가격 스크래핑
+        타깃 테이블: 구리, 알루미늄, 아연, 니켈 (USD/톤)
+        """
+        url = "https://finance.naver.com/marketindex/?tabSel=materials#tab_section"
         try:
-            base_url = "https://api.metals.live/v1/spot"
-
-            for metal in metals:
-                try:
-                    response = requests.get(
-                        f"{base_url}/{metal['code'].lower()}",
-                        timeout=TimeoutConfig.METALS_API_TIMEOUT,
-                        headers=self.headers
-                    )
-
-                    if response.status_code == 200:
-                        try:
-                            data = response.json()
-                            price = data.get('price', 0)
-
-                            if price > 0:
-                                # 실시간 가격으로 변환 (USD/oz → USD/톤)
-                                # 1 troy oz = 31.1035 grams, 1 ton = 1,000,000 grams
-                                price_per_ton = price * (1000000 / 31.1035)
-
-                                price_data = {
-                                    'metal': metal['name'],
-                                    'price': round(price_per_ton, 2),
-                                    'unit': metal['unit'],
-                                    'change': '+0.0%',
-                                    'source': 'Metals Live (실시간)',
-                                    'timestamp': datetime.now(JST).strftime('%Y-%m-%d %H:%M:%S')
-                                }
-                                prices.append(price_data)
-                                partial_handler.add_success(metal['name'], price_data)
-                                logger.info(f"  ✓ {metal['name']}: ${price_data['price']:.2f}")
-                        except (json.JSONDecodeError, ValueError, KeyError) as e:
-                            partial_handler.add_error(metal['name'], ParsingError(str(e)))
-                            logger.warning(f"  ⚠ {metal['name']} 파싱 실패: {str(e)[:30]}")
-
-                    else:
-                        error = APIError(f"Status {response.status_code}")
-                        partial_handler.add_error(metal['name'], error)
-                        logger.warning(f"  ⚠ {metal['name']} API 에러: {response.status_code}")
-
-                except requests.Timeout:
-                    error = NetworkError("Request timeout")
-                    partial_handler.add_error(metal['name'], error)
-                    logger.warning(f"  ⚠ {metal['name']} 타임아웃")
-
-                except requests.ConnectionError as e:
-                    error = NetworkError(str(e))
-                    partial_handler.add_error(metal['name'], error)
-                    logger.warning(f"  ⚠ {metal['name']} 연결 실패")
-
+            response = requests.get(url, headers=self.headers, timeout=TimeoutConfig.METALS_API_TIMEOUT)
+            response.encoding = 'euc-kr'
         except requests.Timeout:
-            logger.debug("금속 가격 타임아웃")
-            raise NetworkError("Metals API timeout")
+            raise NetworkError("네이버 금융 비철금속 페이지 타임아웃")
         except requests.ConnectionError as e:
-            logger.debug(f"금속 가격 연결 오류: {str(e)[:50]}")
-            raise NetworkError(f"Metals connection error: {str(e)}")
-        except requests.RequestException as e:
-            logger.debug(f"금속 가격 요청 오류: {str(e)[:50]}")
-            raise NetworkError(f"Metals request error: {str(e)}")
+            raise NetworkError(f"네이버 금융 비철금속 연결 오류: {str(e)}")
 
-        if prices:
-            report = partial_handler.get_report()
-            logger.info(f"부분 성공: {report['successful']}/{len(metals)}개 수집 ({report['success_rate']:.0f}%)")
-            # 가격과 부분 성공 리포트 함께 반환
-            return {
-                'prices': prices,
-                'report': report
-            }
-        else:
-            logger.warning("모든 금속 가격 수집 실패 - 샘플 데이터 사용")
-            return None
+        soup = BeautifulSoup(response.text, 'html.parser')
 
-    @staticmethod
-    def _get_sample_lme_prices() -> List[Dict[str, Any]]:
-        """실시간 LME 비철금속가격 데이터 (2026년 6월 기준)"""
-        import random
-        # 2026년 현재 시세 (실제 시장 가격 기반)
-        base_prices = {
-            '구리(Copper)': {'price': 10500, 'last_month': 10200, 'this_month': 10350},
-            '니켈(Nickel)': {'price': 17800, 'last_month': 17200, 'this_month': 17500},
-            '아연(Zinc)': {'price': 2850, 'last_month': 2750, 'this_month': 2800},
-            '알루미늄(Aluminum)': {'price': 2520, 'last_month': 2480, 'this_month': 2500},
+        # 비철금속 코드 → 한글명 매핑 (네이버 금융 기준)
+        metal_map = {
+            '구리':      '구리(Copper)',
+            '알루미늄합금': '알루미늄(Aluminum)',
+            '아연':      '아연(Zinc)',
+            '니켈':      '니켈(Nickel)',
         }
 
         prices = []
-        for metal_name, data in base_prices.items():
-            # 실시간 변동성 반영 (±2%)
-            variation = random.uniform(-0.02, 0.02)
-            current_price = round(data['price'] * (1 + variation), 2)
-            change_pct = round((current_price / data['last_month'] - 1) * 100, 1)
+        tables = soup.find_all('table')
+        for table in tables:
+            for row in table.find_all('tr'):
+                cells = row.find_all('td')
+                if len(cells) < 4:
+                    continue
+                name_raw = cells[0].get_text(strip=True)
+                for keyword, display_name in metal_map.items():
+                    if keyword in name_raw:
+                        try:
+                            price_str = cells[2].get_text(strip=True).replace(',', '')
+                            change_val = cells[3].get_text(strip=True).replace(',', '')
+                            change_pct = cells[4].get_text(strip=True) if len(cells) > 4 else '0%'
+                            date_str = cells[5].get_text(strip=True) if len(cells) > 5 else ''
 
-            prices.append({
-                'metal': metal_name,
-                'price': current_price,
-                'unit': 'USD/톤',
-                'change': f'{change_pct:+.1f}%',
-                'last_month_avg': data['last_month'],
-                'this_month_avg': data['this_month'],
-                'source': 'LME (실시간)',
-                'timestamp': datetime.now(JST).strftime('%Y-%m-%d %H:%M:%S')
-            })
+                            price = float(price_str)
+                            change = float(change_val)
 
-        return prices
+                            # 변동률 부호 정리
+                            if '+' not in change_pct and '-' not in change_pct:
+                                change_pct = f'+{change_pct}'
+
+                            prices.append({
+                                'metal': display_name,
+                                'price': price,
+                                'unit': 'USD/톤',
+                                'change': change_pct,
+                                'change_value': change,
+                                'source': '네이버 금융 (LME)',
+                                'date': date_str,
+                                'timestamp': datetime.now(JST).strftime('%Y-%m-%d %H:%M:%S')
+                            })
+                            logger.info(f"  ✓ {display_name}: {price:,.2f} USD/톤 ({change_pct})")
+                        except (ValueError, IndexError) as e:
+                            logger.warning(f"  ⚠ {display_name} 파싱 오류: {e}")
+                        break
+
+        return prices if prices else None
+
+    @staticmethod
+    def _get_sample_lme_prices() -> List[Dict[str, Any]]:
+        """샘플 LME 비철금속가격 (네이버 금융 스크래핑 실패 시 폴백)"""
+        return [
+            {'metal': '구리(Copper)',      'price': 13420.00, 'unit': 'USD/톤', 'change': '+0.37%', 'source': '샘플 데이터', 'timestamp': datetime.now(JST).strftime('%Y-%m-%d %H:%M:%S')},
+            {'metal': '알루미늄(Aluminum)', 'price': 3510.00,  'unit': 'USD/톤', 'change': '+0.00%', 'source': '샘플 데이터', 'timestamp': datetime.now(JST).strftime('%Y-%m-%d %H:%M:%S')},
+            {'metal': '아연(Zinc)',         'price': 3468.00,  'unit': 'USD/톤', 'change': '-0.52%', 'source': '샘플 데이터', 'timestamp': datetime.now(JST).strftime('%Y-%m-%d %H:%M:%S')},
+            {'metal': '니켈(Nickel)',       'price': 17440.00, 'unit': 'USD/톤', 'change': '+0.35%', 'source': '샘플 데이터', 'timestamp': datetime.now(JST).strftime('%Y-%m-%d %H:%M:%S')},
+        ]
 
     def fetch_exchange_rates(self) -> None:
         """
         환율정보 수집
-        출처: 한국은행 API 또는 공개 데이터
+        출처: 네이버 금융 환율 페이지 스크래핑
+        https://finance.naver.com/marketindex/exchangeList.naver
         """
+        logger.info("환율정보 수집 중...")
         try:
-            logger.info("환율정보 수집 중...")
-            rates = self._try_fetch_exchange_api()
-
-            if not rates:
-                logger.warning("⚠ 환율 API 연결 실패 - 샘플 데이터 사용")
-                rates = self._get_sample_exchange_rates()
-
-            self.data['exchange_rates'] = rates
-            logger.info(f"✓ 환율정보 {len(rates)}개 로드 완료 (출처: {rates[0].get('source', 'Unknown')})")
-
+            rates = self._scrape_naver_exchange()
+            if rates:
+                self.data['exchange_rates'] = rates
+                logger.info(f"✓ 환율정보 {len(rates)}개 로드 완료 (출처: 네이버 금융)")
+            else:
+                logger.warning("⚠ 네이버 금융 환율 스크래핑 실패 - 샘플 데이터 사용")
+                self.data['exchange_rates'] = self._get_sample_exchange_rates()
         except Exception as e:
             logger.error(f"환율정보 수집 중 오류: {e}")
             self.data['exchange_rates'] = self._get_sample_exchange_rates()
 
-    @retry_with_backoff(
-        max_retries=2,
-        initial_delay=1.0,
-        backoff_factor=2.0,
-        exceptions=(requests.RequestException, ValueError, ParsingError)
-    )
-    def _try_fetch_exchange_api(self) -> Optional[List[Dict[str, Any]]]:
+    def _scrape_naver_exchange(self) -> Optional[List[Dict[str, Any]]]:
         """
-        Open Exchange Rates API에서 환율 정보 가져오기 (재시도 로직 포함)
+        네이버 금융 환율 리스트에서 주요 통화 스크래핑
+        타깃: USD, JPY(100엔), EUR, CNY
+        col[1]=매매기준율, col[4]=이달평균, col[5]=한달전평균
         """
-        currencies = ['USD', 'JPY', 'EUR', 'CNY']
-        rates = []
-
+        url = "https://finance.naver.com/marketindex/exchangeList.naver"
         try:
-            # Open Exchange Rates API (무료 플랜 사용)
-            # 또는 대체: exchangerate-api.com
-            url = "https://api.exchangerate-api.com/v4/latest/KRW"
-            response = requests.get(
-                url,
-                timeout=TimeoutConfig.EXCHANGE_RATE_TIMEOUT
-            )
-
-            if response.status_code == 200:
-                try:
-                    data = response.json()
-                except (json.JSONDecodeError, ValueError) as e:
-                    raise ParsingError(f"환율 JSON 파싱 실패: {str(e)}")
-
-                rates_data = data.get('rates', {})
-
-                for curr in currencies:
-                    if curr in rates_data:
-                        try:
-                            # exchangerate-api.com: rates[통화] = KRW당 통화값
-                            # 역수를 취해 통화당 KRW 계산
-                            rate_value = rates_data[curr]
-
-                            # 0 또는 음수 값 검증
-                            if rate_value <= 0:
-                                logger.warning(f"  ⚠ {curr} 환율 값이 유효하지 않음: {rate_value}")
-                                continue
-
-                            # 통화당 KRW 계산
-                            rate = 1 / rate_value
-
-                            # JPY는 100엔 기준으로 표시
-                            if curr == 'JPY':
-                                rate = rate * 100
-
-                            curr_display = f"{curr}(100엔)" if curr == 'JPY' else curr
-                            # 월간 평균값 (실제 히스토리 부재 시 현재값 기준 추정)
-                            last_month_avg = round(rate * 0.98, 2)
-                            this_month_avg = round(rate * 0.99, 2)
-
-                            rates.append({
-                                'currency': curr_display,
-                                'rate': round(rate, 2),
-                                'change': '+0.0%',
-                                'last_month_avg': last_month_avg,
-                                'this_month_avg': this_month_avg,
-                                'source': '실시간 환율 (Open Exchange Rates)',
-                                'timestamp': datetime.now(JST).strftime('%Y-%m-%d %H:%M:%S')
-                            })
-                            logger.info(f"  ✓ {curr_display}: {rate:.2f} KRW")
-
-                        except (ValueError, ZeroDivisionError) as e:
-                            logger.warning(f"  ⚠ {curr} 환율 계산 오류: {str(e)[:30]}")
-                            continue
-
-                return rates if rates else None
-
-            else:
-                raise APIError(f"환율 API 에러: Status {response.status_code}")
-
+            response = requests.get(url, headers=self.headers, timeout=TimeoutConfig.EXCHANGE_RATE_TIMEOUT)
+            response.encoding = 'euc-kr'
         except requests.Timeout:
-            logger.debug("환율 API 타임아웃")
-            raise NetworkError("Exchange rate API timeout")
+            raise NetworkError("네이버 금융 환율 페이지 타임아웃")
         except requests.ConnectionError as e:
-            logger.debug(f"환율 API 연결 오류: {str(e)[:50]}")
-            raise NetworkError(f"Exchange rate connection error: {str(e)}")
-        except requests.RequestException as e:
-            logger.debug(f"환율 API 요청 오류: {str(e)[:50]}")
-            raise NetworkError(f"Exchange rate request error: {str(e)}")
-        except ParsingError:
-            raise
-        except APIError:
-            raise
-        except Exception as e:
-            logger.error(f"환율 정보 예상치 못한 오류: {str(e)[:50]}")
-            raise
+            raise NetworkError(f"네이버 금융 환율 연결 오류: {str(e)}")
+
+        soup = BeautifulSoup(response.text, 'html.parser')
+
+        # 통화명 키워드 → 표시명 매핑
+        currency_map = {
+            '미국 USD':          'USD',
+            '유럽연합 EUR':       'EUR',
+            '일본 JPY':          'JPY(100엔)',
+            '중국 CNY':          'CNY',
+        }
+
+        rates = []
+        rows = soup.find_all('tr')
+        for row in rows:
+            cells = row.find_all('td')
+            if len(cells) < 6:
+                continue
+            name_raw = cells[0].get_text(strip=True)
+            for keyword, display_name in currency_map.items():
+                if keyword in name_raw:
+                    try:
+                        rate = float(cells[1].get_text(strip=True).replace(',', ''))
+                        this_month_avg_str = cells[4].get_text(strip=True).replace(',', '')
+                        last_month_avg_str = cells[5].get_text(strip=True).replace(',', '')
+
+                        this_month_avg = float(this_month_avg_str) if this_month_avg_str else round(rate * 0.99, 2)
+                        last_month_avg = float(last_month_avg_str) if last_month_avg_str else round(rate * 0.98, 2)
+
+                        # 한달 전 대비 변동률
+                        if last_month_avg > 0:
+                            change_pct = round((rate / last_month_avg - 1) * 100, 1)
+                            change_str = f'{change_pct:+.1f}%'
+                        else:
+                            change_str = '+0.0%'
+
+                        rates.append({
+                            'currency': display_name,
+                            'rate': rate,
+                            'change': change_str,
+                            'last_month_avg': last_month_avg,
+                            'this_month_avg': this_month_avg,
+                            'source': '네이버 금융 (실시간)',
+                            'timestamp': datetime.now(JST).strftime('%Y-%m-%d %H:%M:%S')
+                        })
+                        logger.info(f"  ✓ {display_name}: {rate:,.2f} KRW ({change_str})")
+                    except (ValueError, IndexError) as e:
+                        logger.warning(f"  ⚠ {display_name} 파싱 오류: {e}")
+                    break
+
+        return rates if rates else None
 
     @staticmethod
     def _get_sample_exchange_rates() -> List[Dict[str, Any]]:
-        """샘플 환율 데이터"""
+        """샘플 환율 데이터 (네이버 금융 스크래핑 실패 시 폴백)"""
         return [
-            {'currency': 'USD', 'rate': 1298.50, 'change': '+0.2%', 'last_month_avg': 1285.30, 'this_month_avg': 1293.80, 'source': '샘플 데이터', 'timestamp': datetime.now(JST).strftime('%Y-%m-%d %H:%M:%S')},
-            {'currency': 'JPY(100엔)', 'rate': 948.30, 'change': '-0.1%', 'last_month_avg': 952.10, 'this_month_avg': 949.50, 'source': '샘플 데이터', 'timestamp': datetime.now(JST).strftime('%Y-%m-%d %H:%M:%S')},
-            {'currency': 'EUR', 'rate': 1410.20, 'change': '+0.5%', 'last_month_avg': 1395.60, 'this_month_avg': 1407.80, 'source': '샘플 데이터', 'timestamp': datetime.now(JST).strftime('%Y-%m-%d %H:%M:%S')},
-            {'currency': 'CNY', 'rate': 179.50, 'change': '+0.3%', 'last_month_avg': 178.20, 'this_month_avg': 179.10, 'source': '샘플 데이터', 'timestamp': datetime.now(JST).strftime('%Y-%m-%d %H:%M:%S')},
+            {'currency': 'USD',       'rate': 1518.20, 'change': '+1.0%', 'last_month_avg': 1503.40, 'this_month_avg': 1533.00, 'source': '샘플 데이터', 'timestamp': datetime.now(JST).strftime('%Y-%m-%d %H:%M:%S')},
+            {'currency': 'JPY(100엔)', 'rate': 948.22,  'change': '+1.0%', 'last_month_avg': 938.93,  'this_month_avg': 957.51,  'source': '샘플 데이터', 'timestamp': datetime.now(JST).strftime('%Y-%m-%d %H:%M:%S')},
+            {'currency': 'EUR',        'rate': 1757.62, 'change': '+1.0%', 'last_month_avg': 1740.05, 'this_month_avg': 1775.19, 'source': '샘플 데이터', 'timestamp': datetime.now(JST).strftime('%Y-%m-%d %H:%M:%S')},
+            {'currency': 'CNY',        'rate': 224.56,  'change': '+1.0%', 'last_month_avg': 222.32,  'this_month_avg': 226.80,  'source': '샘플 데이터', 'timestamp': datetime.now(JST).strftime('%Y-%m-%d %H:%M:%S')},
         ]
 
     def fetch_steel_news(self) -> None:
