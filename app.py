@@ -85,6 +85,14 @@ def index():
     """메인 페이지"""
     return render_template('index.html')
 
+@app.after_request
+def add_cors_headers(response):
+    """file:// 로컬 HTML에서도 API 접근 가능하도록 CORS 허용"""
+    response.headers['Access-Control-Allow-Origin'] = '*'
+    response.headers['Access-Control-Allow-Methods'] = 'GET, POST, OPTIONS'
+    response.headers['Access-Control-Allow-Headers'] = 'Content-Type'
+    return response
+
 @app.route('/api/data')
 def get_data():
     """수집된 데이터를 JSON으로 반환"""
@@ -95,7 +103,6 @@ def get_data():
             with open(data_path, 'r', encoding='utf-8') as f:
                 data = json.load(f)
         else:
-            # data.json이 없으면 샘플 데이터 반환
             data = {
                 'updated_at': datetime.now(JST).isoformat(),
                 'lme_prices': [],
