@@ -536,7 +536,7 @@
             let html = '';
             market.forEach(m => {
                 const badgeClass = m.impact === '긍정적' ? 'badge-positive' : 'badge-negative';
-                const link = m.url ? `<a href="${m.url}" target="_blank" rel="noopener noreferrer" class="card-link">🔗 ${m.source} 조회</a>` : '';
+                const link = m.url ? `<a href="${m.url}" target="_blank" rel="noopener noreferrer" class="card-link">🔗 뉴스 원문 보기</a>` : '';
                 html += `<div class="card">
                     <div class="card-title">📊 ${m.sector}</div>
                     <div class="card-meta">📅 ${m.date} | <span class="badge ${badgeClass}">${m.impact}</span>${m.source ? ' | ' + m.source : ''}</div>
@@ -557,10 +557,12 @@
 
             let html = '';
             policy.forEach(p => {
+                const link = p.url ? `<a href="${p.url}" target="_blank" rel="noopener noreferrer" class="card-link">🔗 뉴스 원문 보기</a>` : '';
                 html += `<div class="card">
                     <div class="card-title">${p.title}</div>
                     <div class="card-meta">📅 ${p.date} | 📰 ${p.source}</div>
                     <div class="card-content">${p.content}</div>
+                    ${link}
                 </div>`;
             });
             content.innerHTML = html;
