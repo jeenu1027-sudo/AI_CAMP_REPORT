@@ -505,11 +505,13 @@ class IndustryCrawler:
 
                         if item is not None:
                             title = item.findtext('title', '')
+                            link = item.findtext('link') or ''
                             market_data.append({
                                 'sector': keyword,
                                 'info': title[:80],
                                 'impact': '긍정적' if '증가' in title or '성장' in title else '중립적',
-                                'date': datetime.now(JST).strftime('%Y-%m-%d')
+                                'date': datetime.now(JST).strftime('%Y-%m-%d'),
+                                'url': link
                             })
 
                 except requests.Timeout:
@@ -612,11 +614,13 @@ class IndustryCrawler:
 
                         if item is not None:
                             title = item.findtext('title', '')
+                            link = item.findtext('link') or ''
                             policy_data.append({
                                 'title': title[:100],
                                 'source': '정책뉴스',
                                 'date': datetime.now(JST).strftime('%Y-%m-%d'),
-                                'content': title[:150]
+                                'content': title[:150],
+                                'url': link
                             })
 
                 except requests.Timeout:
