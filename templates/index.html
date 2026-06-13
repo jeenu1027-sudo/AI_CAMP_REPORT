@@ -514,7 +514,7 @@
 
             let html = '';
             news.forEach(n => {
-                const link = n.url ? `<a href="${n.url}" target="_blank" rel="noopener noreferrer" class="card-link">🔗 DART 공시 조회</a>` : '';
+                const link = n.url ? `<a href="${n.url}" target="_blank" rel="noopener noreferrer" class="card-link">🔗 뉴스 원문 보기</a>` : '';
                 html += `<div class="card">
                     <div class="card-title">🏢 ${n.company}</div>
                     <div class="card-meta">📅 ${n.date} | 📰 ${n.source}${n.disclosure_type ? ' | ' + n.disclosure_type : ''}</div>
