@@ -218,34 +218,6 @@ if __name__ == '__main__':
         name='Daily update at 8:01 JST'
     )
 
-    # 앱 시작시 초기 데이터 수집 (타임아웃: 5분)
-    logger.info("앱 시작, 초기 데이터 수집 중... (타임아웃: 5분)")
-    try:
-        def init_crawler():
-            """초기 크롤러 (타임아웃 감시)"""
-            try:
-                crawler = IndustryCrawler()
-                crawler.run()
-                logger.info("✓ 초기 데이터 수집 완료")
-            except Exception as e:
-                logger.error(f"❌ 초기 크롤링 오류: {e}")
-
-        # 별도 스레드에서 크롤러 실행 (daemon=True: 앱 종료 시 자동 종료)
-        crawler_thread = threading.Thread(target=init_crawler, daemon=True)
-        crawler_thread.start()
-
-        # 초기화 타임아웃: 5분(300초) - 과도하게 오래 대기하지 않음
-        INIT_TIMEOUT_SECONDS = 300
-        crawler_thread.join(timeout=INIT_TIMEOUT_SECONDS)
-
-        if crawler_thread.is_alive():
-            logger.warning(f"⚠ 초기 데이터 수집 타임아웃 ({INIT_TIMEOUT_SECONDS}초) - 백그라운드에서 계속 실행")
-        else:
-            logger.info("✓ 초기화 완료")
-
-    except Exception as e:
-        logger.error(f"❌ 초기화 중 오류: {e}")
-
     try:
         scheduler.start()
         logger.info("✓ APScheduler 시작 완료")
@@ -253,12 +225,23 @@ if __name__ == '__main__':
         logger.error(f"❌ APScheduler 시작 실패: {e}")
         raise
 
+    # 초기 데이터 수집을 백그라운드에서 실행 (Flask 서버 시작을 막지 않음)
+    def init_crawler():
+        try:
+            logger.info("초기 데이터 수집 시작 (백그라운드)...")
+            crawler = IndustryCrawler()
+            crawler.run()
+            logger.info("✓ 초기 데이터 수집 완료")
+        except Exception as e:
+            logger.error(f"❌ 초기 크롤링 오류: {e}")
+
+    threading.Thread(target=init_crawler, daemon=True).start()
+
     logger.info("=" * 50)
     logger.info("✓ Flask 서버 시작")
     logger.info("  📋 루브릭 검증: 매일 8:00 AM JST")
     logger.info("  📊 데이터 업데이트: 매일 8:01 AM JST")
-    logger.info("  http://localhost:5000 에 접속하세요")
-    logger.info("  헬스 체크: http://localhost:5000/api/health")
+    logger.info("  헬스 체크: /api/health")
     logger.info("=" * 50)
 
     port = int(os.getenv("PORT", 5000))
