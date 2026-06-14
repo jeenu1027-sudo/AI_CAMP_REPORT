@@ -9,7 +9,7 @@ import android.webkit.WebViewClient;
 public class MainActivity extends Activity {
 
     // Railway 배포 후 이 URL을 실제 주소로 변경하세요
-    private static final String SERVER_URL = "https://YOUR_APP.railway.app";
+    private static final String SERVER_URL = "https://web-production-af2bc.up.railway.app";
 
     private WebView webView;
 
