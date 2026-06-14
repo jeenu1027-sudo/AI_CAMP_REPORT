@@ -321,8 +321,10 @@ def health_check() -> Dict[str, Any]:
     """시스템 헬스 체크"""
     metrics = error_metrics.get_summary()
 
+    # 에러가 없거나 복구율 80% 이상이면 healthy
+    is_healthy = metrics['total_errors'] == 0 or metrics['recovery_rate'] > 80
     return {
-        'status': 'healthy' if metrics['recovery_rate'] > 80 else 'degraded',
+        'status': 'healthy' if is_healthy else 'degraded',
         'recovery_rate': metrics['recovery_rate'],
         'total_errors': metrics['total_errors'],
         'recent_errors': metrics['recent_errors'],
