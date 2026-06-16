@@ -13,7 +13,6 @@ import logging
 from xml.etree import ElementTree as ET
 from typing import Optional, List, Dict, Any
 from email.utils import parsedate_to_datetime
-import yfinance as yf
 
 # 에러 처리 모듈 임포트
 from error_handler import (
@@ -56,14 +55,13 @@ class IndustryCrawler:
         """
         LME 비철금속가격 수집
         현재가/전일대비: 네이버 금융 스크래핑
-        당월평균/전월평균: yfinance 역사 데이터
+        당월평균/전월평균: 네이버 금융 비철금속 상세 페이지 스크래핑
         """
         logger.info("LME 비철금속가격 수집 중...")
         try:
             prices = self._scrape_naver_metals()
             if prices:
-                # 월평균 데이터 추가
-                monthly_avgs = self._fetch_monthly_averages()
+                monthly_avgs = self._scrape_naver_metal_monthly()
                 for p in prices:
                     avgs = monthly_avgs.get(p['metal'], {})
                     p['prev_price'] = round(p['price'] - p['change_value'], 2)
@@ -79,41 +77,49 @@ class IndustryCrawler:
             logger.error(f"❌ LME 비철금속가격 수집 중 오류: {e}")
             self.data['lme_prices'] = self._get_sample_lme_prices()
 
-    def _fetch_monthly_averages(self) -> Dict[str, Dict]:
-        """yfinance로 당월/전월 평균 계산 (LME 근사치: COMEX 선물 사용)"""
-        # COMEX 선물 티커 (LME 가격과 유사)
-        ticker_map = {
-            '구리(Copper)':      'HG=F',
-            '알루미늄(Aluminum)': 'ALI=F',
-            '아연(Zinc)':         'ZNC=F',
-            '니켈(Nickel)':       'NI=F',
+    def _scrape_naver_metal_monthly(self) -> Dict[str, Dict]:
+        """
+        네이버 금융 비철금속 상세 페이지에서 당월/전월 평균 스크래핑
+        URL 예시: https://finance.naver.com/marketindex/worldDetail.naver?marketindexCd=CMDT_CU
+        """
+        metal_codes = {
+            '구리(Copper)':      'CMDT_CU',
+            '알루미늄(Aluminum)': 'CMDT_AL',
+            '아연(Zinc)':         'CMDT_ZN',
+            '니켈(Nickel)':       'CMDT_NI',
         }
         now = datetime.now(JST)
-        # 이번 달 1일 ~ 오늘, 지난 달 전체
-        this_month_start = now.replace(day=1).strftime('%Y-%m-%d')
-        last_month_end = now.replace(day=1) - timedelta(days=1)
-        last_month_start = last_month_end.replace(day=1).strftime('%Y-%m-%d')
-        last_month_end_str = last_month_end.strftime('%Y-%m-%d')
-        fetch_start = last_month_start
+        this_month = now.strftime('%Y%m')
+        last_month = (now.replace(day=1) - timedelta(days=1)).strftime('%Y%m')
 
         result = {}
-        for metal_name, ticker in ticker_map.items():
+        for metal_name, code in metal_codes.items():
             try:
-                df = yf.download(ticker, start=fetch_start, progress=False, auto_adjust=True)
-                if df.empty:
-                    continue
+                url = f"https://finance.naver.com/marketindex/worldDailyQuote.naver?marketindexCd={code}&fdtc=2"
+                resp = requests.get(url, headers=self.headers, timeout=10)
+                resp.encoding = 'euc-kr'
+                soup = BeautifulSoup(resp.text, 'html.parser')
 
-                # 단위 변환: HG=F는 센트/파운드 → USD/톤 (1파운드=0.453592kg, 1톤=1000kg)
-                multiplier = 22.0462 if ticker == 'HG=F' else 1.0
+                this_prices, last_prices = [], []
+                for row in soup.select('table tbody tr'):
+                    cells = row.find_all('td')
+                    if len(cells) < 2:
+                        continue
+                    date_raw = cells[0].get_text(strip=True).replace('.', '')
+                    price_raw = cells[1].get_text(strip=True).replace(',', '')
+                    try:
+                        price_val = float(price_raw)
+                        if date_raw.startswith(this_month):
+                            this_prices.append(price_val)
+                        elif date_raw.startswith(last_month):
+                            last_prices.append(price_val)
+                    except ValueError:
+                        continue
 
-                this_df = df[df.index >= this_month_start]
-                last_df = df[(df.index >= last_month_start) & (df.index <= last_month_end_str)]
-
-                this_avg = round(float(this_df['Close'].mean()) * multiplier, 2) if not this_df.empty else None
-                last_avg = round(float(last_df['Close'].mean()) * multiplier, 2) if not last_df.empty else None
-
+                this_avg = round(sum(this_prices) / len(this_prices), 2) if this_prices else None
+                last_avg = round(sum(last_prices) / len(last_prices), 2) if last_prices else None
                 month_change = None
-                if this_avg and last_avg and last_avg != 0:
+                if this_avg and last_avg:
                     month_change = f"{((this_avg - last_avg) / last_avg * 100):+.2f}%"
 
                 result[metal_name] = {
