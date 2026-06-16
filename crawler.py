@@ -13,6 +13,7 @@ import logging
 from xml.etree import ElementTree as ET
 from typing import Optional, List, Dict, Any
 from email.utils import parsedate_to_datetime
+import yfinance as yf
 
 # 에러 처리 모듈 임포트
 from error_handler import (
@@ -54,21 +55,76 @@ class IndustryCrawler:
     def fetch_lme_prices(self) -> None:
         """
         LME 비철금속가격 수집
-        출처: 네이버 금융 비철금속 탭 스크래핑
-        https://finance.naver.com/marketindex/?tabSel=materials#tab_section
+        현재가/전일대비: 네이버 금융 스크래핑
+        당월평균/전월평균: yfinance 역사 데이터
         """
         logger.info("LME 비철금속가격 수집 중...")
         try:
             prices = self._scrape_naver_metals()
             if prices:
+                # 월평균 데이터 추가
+                monthly_avgs = self._fetch_monthly_averages()
+                for p in prices:
+                    avgs = monthly_avgs.get(p['metal'], {})
+                    p['prev_price'] = round(p['price'] - p['change_value'], 2)
+                    p['this_month_avg'] = avgs.get('this_month_avg')
+                    p['last_month_avg'] = avgs.get('last_month_avg')
+                    p['month_change'] = avgs.get('month_change')
                 self.data['lme_prices'] = prices
-                logger.info(f"✓ LME 비철금속가격 {len(prices)}개 로드 완료 (출처: 네이버 금융)")
+                logger.info(f"✓ LME 비철금속가격 {len(prices)}개 로드 완료")
             else:
                 logger.warning("⚠ 네이버 금융 스크래핑 실패 - 샘플 데이터 사용")
                 self.data['lme_prices'] = self._get_sample_lme_prices()
         except Exception as e:
             logger.error(f"❌ LME 비철금속가격 수집 중 오류: {e}")
             self.data['lme_prices'] = self._get_sample_lme_prices()
+
+    def _fetch_monthly_averages(self) -> Dict[str, Dict]:
+        """yfinance로 당월/전월 평균 계산 (LME 근사치: COMEX 선물 사용)"""
+        # COMEX 선물 티커 (LME 가격과 유사)
+        ticker_map = {
+            '구리(Copper)':      'HG=F',
+            '알루미늄(Aluminum)': 'ALI=F',
+            '아연(Zinc)':         'ZNC=F',
+            '니켈(Nickel)':       'NI=F',
+        }
+        now = datetime.now(JST)
+        # 이번 달 1일 ~ 오늘, 지난 달 전체
+        this_month_start = now.replace(day=1).strftime('%Y-%m-%d')
+        last_month_end = now.replace(day=1) - timedelta(days=1)
+        last_month_start = last_month_end.replace(day=1).strftime('%Y-%m-%d')
+        last_month_end_str = last_month_end.strftime('%Y-%m-%d')
+        fetch_start = last_month_start
+
+        result = {}
+        for metal_name, ticker in ticker_map.items():
+            try:
+                df = yf.download(ticker, start=fetch_start, progress=False, auto_adjust=True)
+                if df.empty:
+                    continue
+
+                # 단위 변환: HG=F는 센트/파운드 → USD/톤 (1파운드=0.453592kg, 1톤=1000kg)
+                multiplier = 22.0462 if ticker == 'HG=F' else 1.0
+
+                this_df = df[df.index >= this_month_start]
+                last_df = df[(df.index >= last_month_start) & (df.index <= last_month_end_str)]
+
+                this_avg = round(float(this_df['Close'].mean()) * multiplier, 2) if not this_df.empty else None
+                last_avg = round(float(last_df['Close'].mean()) * multiplier, 2) if not last_df.empty else None
+
+                month_change = None
+                if this_avg and last_avg and last_avg != 0:
+                    month_change = f"{((this_avg - last_avg) / last_avg * 100):+.2f}%"
+
+                result[metal_name] = {
+                    'this_month_avg': this_avg,
+                    'last_month_avg': last_avg,
+                    'month_change': month_change,
+                }
+                logger.info(f"  ✓ {metal_name} 월평균: 당월={this_avg}, 전월={last_avg}")
+            except Exception as e:
+                logger.warning(f"  ⚠ {metal_name} 월평균 조회 실패: {e}")
+        return result
 
     def _scrape_naver_metals(self) -> Optional[List[Dict[str, Any]]]:
         """
@@ -137,11 +193,12 @@ class IndustryCrawler:
     @staticmethod
     def _get_sample_lme_prices() -> List[Dict[str, Any]]:
         """샘플 LME 비철금속가격 (네이버 금융 스크래핑 실패 시 폴백)"""
+        ts = datetime.now(JST).strftime('%Y-%m-%d %H:%M:%S')
         return [
-            {'metal': '구리(Copper)',      'price': 13420.00, 'unit': 'USD/톤', 'change': '+0.37%', 'source': '샘플 데이터', 'timestamp': datetime.now(JST).strftime('%Y-%m-%d %H:%M:%S')},
-            {'metal': '알루미늄(Aluminum)', 'price': 3510.00,  'unit': 'USD/톤', 'change': '+0.00%', 'source': '샘플 데이터', 'timestamp': datetime.now(JST).strftime('%Y-%m-%d %H:%M:%S')},
-            {'metal': '아연(Zinc)',         'price': 3468.00,  'unit': 'USD/톤', 'change': '-0.52%', 'source': '샘플 데이터', 'timestamp': datetime.now(JST).strftime('%Y-%m-%d %H:%M:%S')},
-            {'metal': '니켈(Nickel)',       'price': 17440.00, 'unit': 'USD/톤', 'change': '+0.35%', 'source': '샘플 데이터', 'timestamp': datetime.now(JST).strftime('%Y-%m-%d %H:%M:%S')},
+            {'metal': '구리(Copper)',      'price': 13420.00, 'prev_price': 13370.00, 'unit': 'USD/톤', 'change': '+0.37%', 'change_value': 50.0,   'this_month_avg': 13200.00, 'last_month_avg': 12800.00, 'month_change': '+3.13%', 'date': '-', 'timestamp': ts},
+            {'metal': '알루미늄(Aluminum)', 'price': 3510.00,  'prev_price': 3510.00,  'unit': 'USD/톤', 'change': '+0.00%', 'change_value': 0.0,    'this_month_avg': 3480.00,  'last_month_avg': 3350.00,  'month_change': '+3.88%', 'date': '-', 'timestamp': ts},
+            {'metal': '아연(Zinc)',         'price': 3468.00,  'prev_price': 3486.00,  'unit': 'USD/톤', 'change': '-0.52%', 'change_value': -18.0,  'this_month_avg': 3450.00,  'last_month_avg': 3300.00,  'month_change': '+4.55%', 'date': '-', 'timestamp': ts},
+            {'metal': '니켈(Nickel)',       'price': 17440.00, 'prev_price': 17379.00, 'unit': 'USD/톤', 'change': '+0.35%', 'change_value': 61.0,   'this_month_avg': 17100.00, 'last_month_avg': 16500.00, 'month_change': '+3.64%', 'date': '-', 'timestamp': ts},
         ]
 
     def fetch_exchange_rates(self) -> None:

@@ -440,20 +440,32 @@
                 return;
             }
 
-            let html = '<div style="margin-bottom: 10px; color: #666; font-size: 0.9em;">단위: 달러($)</div>';
-            html += '<table><thead><tr><th>비철금속</th><th>현재가</th><th>전일대비</th><th>등락률</th><th>기준일</th><th>출처</th></tr></thead><tbody>';
+            let html = '<div style="margin-bottom: 10px; color: #666; font-size: 0.9em;">단위: USD/톤 &nbsp;|&nbsp; 월평균은 COMEX 선물 기준</div>';
+            html += `<table><thead><tr>
+                <th>비철금속</th>
+                <th>현재가</th>
+                <th>전일가</th>
+                <th>전일대비</th>
+                <th>당월평균</th>
+                <th>전월평균</th>
+                <th>전월대비</th>
+                <th>기준일</th>
+            </tr></thead><tbody>`;
             prices.forEach(p => {
-                const changeClass = p.change.includes('-') ? 'price-down' : 'price-up';
+                const dayClass = p.change && p.change.includes('-') ? 'price-down' : 'price-up';
+                const monClass = p.month_change && p.month_change.includes('-') ? 'price-down' : 'price-up';
                 const changeVal = p.change_value !== undefined
                     ? (p.change_value >= 0 ? '+' : '') + p.change_value.toLocaleString()
                     : '-';
                 html += `<tr>
                     <td>${p.metal}</td>
-                    <td>${p.price.toLocaleString()}</td>
-                    <td class="${changeClass}">${changeVal}</td>
-                    <td class="${changeClass}">${p.change}</td>
+                    <td>${p.price ? p.price.toLocaleString() : '-'}</td>
+                    <td>${p.prev_price ? p.prev_price.toLocaleString() : '-'}</td>
+                    <td class="${dayClass}">${changeVal} (${p.change || '-'})</td>
+                    <td>${p.this_month_avg ? p.this_month_avg.toLocaleString() : '-'}</td>
+                    <td>${p.last_month_avg ? p.last_month_avg.toLocaleString() : '-'}</td>
+                    <td class="${monClass}">${p.month_change || '-'}</td>
                     <td>${p.date || '-'}</td>
-                    <td>${p.source}</td>
                 </tr>`;
             });
             html += '</tbody></table>';
