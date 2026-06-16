@@ -55,13 +55,13 @@ class IndustryCrawler:
         """
         LME 비철금속가격 수집
         현재가/전일대비: 네이버 금융 스크래핑
-        당월평균/전월평균: 네이버 금융 비철금속 상세 페이지 스크래핑
+        당월평균/전월평균: KPRC(한국원자재가격정보) 스크래핑
         """
         logger.info("LME 비철금속가격 수집 중...")
         try:
             prices = self._scrape_naver_metals()
             if prices:
-                monthly_avgs = self._scrape_naver_metal_monthly()
+                monthly_avgs = self._scrape_kprc_monthly()
                 for p in prices:
                     avgs = monthly_avgs.get(p['metal'], {})
                     p['prev_price'] = round(p['price'] - p['change_value'], 2)
@@ -77,44 +77,73 @@ class IndustryCrawler:
             logger.error(f"❌ LME 비철금속가격 수집 중 오류: {e}")
             self.data['lme_prices'] = self._get_sample_lme_prices()
 
-    def _scrape_naver_metal_monthly(self) -> Dict[str, Dict]:
+    def _scrape_kprc_monthly(self) -> Dict[str, Dict]:
         """
-        네이버 금융 비철금속 상세 페이지에서 당월/전월 평균 스크래핑
-        URL 예시: https://finance.naver.com/marketindex/worldDetail.naver?marketindexCd=CMDT_CU
+        KPRC(한국원자재가격정보) 사이트에서 당월/전월 LME 가격 데이터 스크래핑
+        URL: https://www.kprc.or.kr/RawMaterial.do
+        item_cd: 0010=구리, 0020=알루미늄, 0030=아연, 0040=니켈
         """
-        metal_codes = {
-            '구리(Copper)':      'CMDT_CU',
-            '알루미늄(Aluminum)': 'CMDT_AL',
-            '아연(Zinc)':         'CMDT_ZN',
-            '니켈(Nickel)':       'CMDT_NI',
-        }
         now = datetime.now(JST)
         this_month = now.strftime('%Y%m')
         last_month = (now.replace(day=1) - timedelta(days=1)).strftime('%Y%m')
 
+        metal_codes = {
+            '구리(Copper)':      '0010',
+            '알루미늄(Aluminum)': '0020',
+            '아연(Zinc)':         '0030',
+            '니켈(Nickel)':       '0040',
+        }
+
+        base_url = (
+            "https://www.kprc.or.kr/RawMaterial.do"
+            "?lcla_cd=0100&mcla_cd=50&board_id=raw01"
+            "&itemst_cd=0100&board=0&page=1&page_sz=50"
+            f"&from_yyyymm={last_month}&to_yyyymm={this_month}"
+        )
+
         result = {}
-        for metal_name, code in metal_codes.items():
+        for metal_name, item_cd in metal_codes.items():
             try:
-                url = f"https://finance.naver.com/marketindex/worldDailyQuote.naver?marketindexCd={code}&fdtc=2"
+                url = base_url + f"&item_cd={item_cd}"
                 resp = requests.get(url, headers=self.headers, timeout=10)
-                resp.encoding = 'euc-kr'
+                resp.encoding = 'utf-8'
                 soup = BeautifulSoup(resp.text, 'html.parser')
 
+                # 테이블 구조 디버그 로그
+                tables = soup.find_all('table')
+                logger.info(f"  [KPRC] {metal_name}: 테이블 {len(tables)}개 발견")
+
                 this_prices, last_prices = [], []
-                for row in soup.select('table tbody tr'):
-                    cells = row.find_all('td')
-                    if len(cells) < 2:
-                        continue
-                    date_raw = cells[0].get_text(strip=True).replace('.', '')
-                    price_raw = cells[1].get_text(strip=True).replace(',', '')
-                    try:
-                        price_val = float(price_raw)
-                        if date_raw.startswith(this_month):
-                            this_prices.append(price_val)
-                        elif date_raw.startswith(last_month):
-                            last_prices.append(price_val)
-                    except ValueError:
-                        continue
+                for table in tables:
+                    for row in table.find_all('tr'):
+                        cells = row.find_all('td')
+                        if len(cells) < 3:
+                            continue
+                        # 모든 셀 값 로그 (첫 행만)
+                        if not this_prices and not last_prices:
+                            cell_vals = [c.get_text(strip=True) for c in cells]
+                            logger.info(f"  [KPRC] {metal_name} 첫 행 셀: {cell_vals}")
+
+                        # 날짜 컬럼 찾기 (YYYYMM 형식)
+                        for i, cell in enumerate(cells):
+                            val = cell.get_text(strip=True).replace(',', '').replace(' ', '')
+                            if val.startswith(this_month) or val.startswith(last_month):
+                                # 다음 셀이 가격일 가능성
+                                for j in range(i + 1, len(cells)):
+                                    price_str = cells[j].get_text(strip=True).replace(',', '')
+                                    try:
+                                        price_val = float(price_str)
+                                        if price_val > 100:  # 합리적인 금속 가격 범위
+                                            if val.startswith(this_month):
+                                                this_prices.append(price_val)
+                                            else:
+                                                last_prices.append(price_val)
+                                            break
+                                    except ValueError:
+                                        continue
+                                break
+
+                logger.info(f"  [KPRC] {metal_name}: 당월 {len(this_prices)}건, 전월 {len(last_prices)}건")
 
                 this_avg = round(sum(this_prices) / len(this_prices), 2) if this_prices else None
                 last_avg = round(sum(last_prices) / len(last_prices), 2) if last_prices else None
@@ -127,9 +156,9 @@ class IndustryCrawler:
                     'last_month_avg': last_avg,
                     'month_change': month_change,
                 }
-                logger.info(f"  ✓ {metal_name} 월평균: 당월={this_avg}, 전월={last_avg}")
+                logger.info(f"  ✓ {metal_name} KPRC 월평균: 당월={this_avg}, 전월={last_avg}")
             except Exception as e:
-                logger.warning(f"  ⚠ {metal_name} 월평균 조회 실패: {e}")
+                logger.warning(f"  ⚠ {metal_name} KPRC 조회 실패: {e}")
         return result
 
     def _scrape_naver_metals(self) -> Optional[List[Dict[str, Any]]]:
