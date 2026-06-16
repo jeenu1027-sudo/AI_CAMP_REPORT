@@ -106,42 +106,26 @@ class IndustryCrawler:
             try:
                 url = base_url + f"&item_cd={item_cd}"
                 resp = requests.get(url, headers=self.headers, timeout=10)
-                resp.encoding = 'utf-8'
+                resp.encoding = 'euc-kr'
                 soup = BeautifulSoup(resp.text, 'html.parser')
 
-                # 테이블 구조 디버그 로그
-                tables = soup.find_all('table')
-                logger.info(f"  [KPRC] {metal_name}: 테이블 {len(tables)}개 발견")
-
+                # cells[0]=날짜(YYYYMM), cells[1]=단위, cells[2]=가격, cells[3]=출처
                 this_prices, last_prices = [], []
-                for table in tables:
+                for table in soup.find_all('table'):
                     for row in table.find_all('tr'):
                         cells = row.find_all('td')
                         if len(cells) < 3:
                             continue
-                        # 모든 셀 값 로그 (첫 행만)
-                        if not this_prices and not last_prices:
-                            cell_vals = [c.get_text(strip=True) for c in cells]
-                            logger.info(f"  [KPRC] {metal_name} 첫 행 셀: {cell_vals}")
-
-                        # 날짜 컬럼 찾기 (YYYYMM 형식)
-                        for i, cell in enumerate(cells):
-                            val = cell.get_text(strip=True).replace(',', '').replace(' ', '')
-                            if val.startswith(this_month) or val.startswith(last_month):
-                                # 다음 셀이 가격일 가능성
-                                for j in range(i + 1, len(cells)):
-                                    price_str = cells[j].get_text(strip=True).replace(',', '')
-                                    try:
-                                        price_val = float(price_str)
-                                        if price_val > 100:  # 합리적인 금속 가격 범위
-                                            if val.startswith(this_month):
-                                                this_prices.append(price_val)
-                                            else:
-                                                last_prices.append(price_val)
-                                            break
-                                    except ValueError:
-                                        continue
-                                break
+                        date_val = cells[0].get_text(strip=True).replace(' ', '')
+                        price_str = cells[2].get_text(strip=True).replace(',', '')
+                        try:
+                            price_val = float(price_str)
+                            if date_val.startswith(this_month):
+                                this_prices.append(price_val)
+                            elif date_val.startswith(last_month):
+                                last_prices.append(price_val)
+                        except ValueError:
+                            continue
 
                 logger.info(f"  [KPRC] {metal_name}: 당월 {len(this_prices)}건, 전월 {len(last_prices)}건")
 
