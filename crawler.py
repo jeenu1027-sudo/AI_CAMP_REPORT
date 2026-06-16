@@ -111,6 +111,7 @@ class IndustryCrawler:
 
                 # cells[0]=날짜(YYYYMM), cells[1]=단위, cells[2]=가격, cells[3]=출처
                 this_prices, last_prices = [], []
+                logged_sample = False
                 for table in soup.find_all('table'):
                     for row in table.find_all('tr'):
                         cells = row.find_all('td')
@@ -118,6 +119,10 @@ class IndustryCrawler:
                             continue
                         date_val = cells[0].get_text(strip=True).replace(' ', '')
                         price_str = cells[2].get_text(strip=True).replace(',', '')
+                        # 첫 행 날짜/가격 샘플 로그
+                        if not logged_sample:
+                            logger.info(f"  [KPRC] {metal_name} 날짜샘플='{date_val}' 가격샘플='{price_str}' (찾는값: 당월={this_month}, 전월={last_month})")
+                            logged_sample = True
                         try:
                             price_val = float(price_str)
                             if date_val.startswith(this_month):
