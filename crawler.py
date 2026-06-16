@@ -79,13 +79,21 @@ class IndustryCrawler:
 
     def _scrape_kprc_monthly(self) -> Dict[str, Dict]:
         """
-        KPRC(한국원자재가격정보) 사이트에서 당월/전월 LME 가격 데이터 스크래핑
-        URL: https://www.kprc.or.kr/RawMaterial.do
-        item_cd: 0010=구리, 0020=알루미늄, 0030=아연, 0040=니켈
+        KPRC(한국원자재가격정보) 사이트에서 당월/전월 LME 평균가 스크래핑
+        월 단위로 쿼리하면 해당 월 평균가를 1행으로 반환
+        테이블 구조: cells[0]=품목명, cells[1]=단위, cells[2]=가격, cells[3]=출처
         """
         now = datetime.now(JST)
         this_month = now.strftime('%Y%m')
         last_month = (now.replace(day=1) - timedelta(days=1)).strftime('%Y%m')
+
+        # KPRC 품목명(한글) → 내부 metal_name 매핑
+        metal_names = {
+            '구리':    '구리(Copper)',
+            '알루미늄': '알루미늄(Aluminum)',
+            '아연':    '아연(Zinc)',
+            '니켈':    '니켈(Nickel)',
+        }
 
         metal_codes = {
             '구리(Copper)':      '0010',
@@ -94,48 +102,36 @@ class IndustryCrawler:
             '니켈(Nickel)':       '0040',
         }
 
-        base_url = (
-            "https://www.kprc.or.kr/RawMaterial.do"
-            "?lcla_cd=0100&mcla_cd=50&board_id=raw01"
-            "&itemst_cd=0100&board=0&page=1&page_sz=50"
-            f"&from_yyyymm={last_month}&to_yyyymm={this_month}"
-        )
+        def fetch_kprc_price(item_cd: str, yyyymm: str) -> Optional[float]:
+            """특정 품목의 특정 월 평균가 조회"""
+            url = (
+                "https://www.kprc.or.kr/RawMaterial.do"
+                "?lcla_cd=0100&mcla_cd=50&board_id=raw01"
+                f"&itemst_cd=0100&board=0&page=1&page_sz=10"
+                f"&item_cd={item_cd}&from_yyyymm={yyyymm}&to_yyyymm={yyyymm}"
+            )
+            resp = requests.get(url, headers=self.headers, timeout=10)
+            resp.encoding = 'euc-kr'
+            soup = BeautifulSoup(resp.text, 'html.parser')
+            for table in soup.find_all('table'):
+                for row in table.find_all('tr'):
+                    cells = row.find_all('td')
+                    if len(cells) < 3:
+                        continue
+                    price_str = cells[2].get_text(strip=True).replace(',', '')
+                    try:
+                        price_val = float(price_str)
+                        if price_val > 100:
+                            return price_val
+                    except ValueError:
+                        continue
+            return None
 
         result = {}
         for metal_name, item_cd in metal_codes.items():
             try:
-                url = base_url + f"&item_cd={item_cd}"
-                resp = requests.get(url, headers=self.headers, timeout=10)
-                resp.encoding = 'euc-kr'
-                soup = BeautifulSoup(resp.text, 'html.parser')
-
-                # cells[0]=날짜(YYYYMM), cells[1]=단위, cells[2]=가격, cells[3]=출처
-                this_prices, last_prices = [], []
-                logged_sample = False
-                for table in soup.find_all('table'):
-                    for row in table.find_all('tr'):
-                        cells = row.find_all('td')
-                        if len(cells) < 3:
-                            continue
-                        date_val = cells[0].get_text(strip=True).replace(' ', '')
-                        price_str = cells[2].get_text(strip=True).replace(',', '')
-                        # 첫 행 날짜/가격 샘플 로그
-                        if not logged_sample:
-                            logger.info(f"  [KPRC] {metal_name} 날짜샘플='{date_val}' 가격샘플='{price_str}' (찾는값: 당월={this_month}, 전월={last_month})")
-                            logged_sample = True
-                        try:
-                            price_val = float(price_str)
-                            if date_val.startswith(this_month):
-                                this_prices.append(price_val)
-                            elif date_val.startswith(last_month):
-                                last_prices.append(price_val)
-                        except ValueError:
-                            continue
-
-                logger.info(f"  [KPRC] {metal_name}: 당월 {len(this_prices)}건, 전월 {len(last_prices)}건")
-
-                this_avg = round(sum(this_prices) / len(this_prices), 2) if this_prices else None
-                last_avg = round(sum(last_prices) / len(last_prices), 2) if last_prices else None
+                this_avg = fetch_kprc_price(item_cd, this_month)
+                last_avg = fetch_kprc_price(item_cd, last_month)
                 month_change = None
                 if this_avg and last_avg:
                     month_change = f"{((this_avg - last_avg) / last_avg * 100):+.2f}%"
