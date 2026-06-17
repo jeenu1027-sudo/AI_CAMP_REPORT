@@ -1,68 +1,136 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-issue_runner 스킬 테스트 (모킹된 환경)
+issue_runner 스킬 테스트 - 실제 GitHub API 호출
 
 사용법:
-  python test_issue_runner.py
+  GITHUB_TOKEN=your_token python test_issue_runner.py [issue_number]
+
+필수 환경변수:
+  GITHUB_TOKEN: GitHub Personal Access Token (repo 스코프 필요)
+
+인수:
+  issue_number: 댓글을 추가할 이슈 번호 (없으면 기존 이슈 목록에서 첫 번째 사용)
 """
 
-import json
+import os
 import sys
-from unittest.mock import patch, MagicMock
+import requests
 
 # UTF-8 인코딩 강제 설정
 if sys.stdout.encoding != 'utf-8':
     import codecs
     sys.stdout = codecs.getwriter('utf-8')(sys.stdout.buffer, 'strict')
 
+REPO = "jeenu1027-sudo/AI_CAMP_REPORT"
+API_BASE = "https://api.github.com"
+
+
+def add_comment(issue_number: int, comment: str) -> dict:
+    """GitHub API를 통해 실제 이슈에 댓글 추가"""
+    token = os.getenv("GITHUB_TOKEN")
+    if not token:
+        return {"success": False, "error": "GITHUB_TOKEN 환경변수가 설정되지 않았습니다."}
+
+    headers = {
+        "Authorization": f"token {token}",
+        "Accept": "application/vnd.github.v3+json",
+        "Content-Type": "application/json",
+    }
+
+    try:
+        # 이슈 정보 조회
+        issue_resp = requests.get(
+            f"{API_BASE}/repos/{REPO}/issues/{issue_number}",
+            headers=headers,
+            timeout=10,
+        )
+        if issue_resp.status_code == 404:
+            return {"success": False, "error": f"이슈 #{issue_number}을 찾을 수 없습니다."}
+        if issue_resp.status_code != 200:
+            return {"success": False, "error": f"이슈 조회 오류 {issue_resp.status_code}"}
+
+        issue_title = issue_resp.json().get("title", "")
+
+        # 댓글 추가
+        comment_resp = requests.post(
+            f"{API_BASE}/repos/{REPO}/issues/{issue_number}/comments",
+            json={"body": comment},
+            headers=headers,
+            timeout=10,
+        )
+        if comment_resp.status_code == 201:
+            data = comment_resp.json()
+            return {
+                "success": True,
+                "issue_number": issue_number,
+                "issue_title": issue_title,
+                "comment_id": data["id"],
+                "comment_url": data["html_url"],
+                "comment_preview": comment[:80],
+            }
+        else:
+            return {
+                "success": False,
+                "error": f"댓글 API 오류 {comment_resp.status_code}: {comment_resp.json().get('message', '')}",
+            }
+    except requests.exceptions.Timeout:
+        return {"success": False, "error": "GitHub API 요청 시간 초과 (10초)"}
+    except requests.exceptions.RequestException as e:
+        return {"success": False, "error": f"네트워크 오류: {str(e)}"}
+
+
+def get_open_issues() -> list:
+    """저장소의 열린 이슈 목록 조회"""
+    token = os.getenv("GITHUB_TOKEN")
+    if not token:
+        return []
+    headers = {
+        "Authorization": f"token {token}",
+        "Accept": "application/vnd.github.v3+json",
+    }
+    try:
+        resp = requests.get(
+            f"{API_BASE}/repos/{REPO}/issues?state=open&per_page=5",
+            headers=headers,
+            timeout=10,
+        )
+        if resp.status_code == 200:
+            return [{"number": i["number"], "title": i["title"]} for i in resp.json()]
+    except Exception:
+        pass
+    return []
+
 
 class GitHubCommentCreatorTest:
-    """GitHub Comment Creator 테스트"""
+    """GitHub Comment Creator 테스트 - 실제 API 호출"""
 
     def __init__(self):
         self.passed = 0
         self.failed = 0
 
-    def add_comment_mock(self, issue_number: int, issue_title: str, comment: str, comment_id: int) -> dict:
-        """모킹된 GitHub API 호출"""
-        return {
-            "success": True,
-            "issue_number": issue_number,
-            "issue_title": issue_title,
-            "comment": comment,
-            "comment_url": f"https://github.com/jeenu1027-sudo/AI_CAMP_REPORT/issues/{issue_number}#comment-{comment_id}",
-        }
-
     def print_result(self, result: dict) -> None:
-        """결과를 친화적인 메시지 형식으로 출력"""
         if result["success"]:
-            print("\n[SUCCESS] Comment added successfully!")
-            print(f"[Issue] #{result['issue_number']} - {result['issue_title']}")
-            print(f"[Comment] {result['comment'][:50]}...")
+            print(f"\n[SUCCESS] 댓글이 추가되었습니다!")
+            print(f"[Issue #{result['issue_number']}] {result['issue_title']}")
+            print(f"[Comment] {result['comment_preview']}...")
             print(f"[URL] {result['comment_url']}")
         else:
             print(f"\n[FAIL] {result.get('error', 'Unknown error')}")
 
-    def test_case(self, test_id: int, name: str, issue_number: int, issue_title: str, comment: str) -> bool:
-        """개별 테스트 케이스 실행"""
+    def test_case(self, test_id: int, name: str, issue_number: int, comment: str) -> bool:
         print(f"\n{'=' * 70}")
         print(f"[TEST #{test_id}] {name}")
         print(f"{'=' * 70}")
         print(f"[Issue #] {issue_number}")
-        print(f"[Issue Title] {issue_title}")
         print(f"[Comment] {comment[:60]}...")
 
         try:
-            # 모킹된 GitHub API 호출
-            result = self.add_comment_mock(issue_number, issue_title, comment, 100000 + test_id)
-
-            # 결과 출력
+            result = add_comment(issue_number, comment)
             self.print_result(result)
 
-            # 결과 검증
-            if result["success"] and result["issue_number"] == issue_number:
-                print(f"\n[PASS] 테스트 성공! (Issue #{issue_number}에 댓글 추가됨)")
+            if result["success"]:
+                print(f"\n[PASS] 테스트 성공!")
                 self.passed += 1
                 return True
             else:
@@ -75,59 +143,61 @@ class GitHubCommentCreatorTest:
             self.failed += 1
             return False
 
-    def run_all_tests(self):
-        """모든 테스트 실행"""
+    def run_all_tests(self, target_issue: int = None):
+        print("\n" + "=" * 70)
+        print("[TEST] GitHub Comment Creator (issue_runner) 스킬 테스트 - 실제 API")
+        print("=" * 70)
+
+        token = os.getenv("GITHUB_TOKEN")
+        if not token:
+            print("[ERROR] GITHUB_TOKEN 환경변수가 없습니다.")
+            print("  설정 방법: set GITHUB_TOKEN=your_token_here  (Windows)")
+            print("  설정 방법: export GITHUB_TOKEN=your_token_here  (Linux/Mac)")
+            return False
+
+        # 대상 이슈 결정
+        issue_number = target_issue
+        if not issue_number:
+            print("\n[INFO] 이슈 목록 조회 중...")
+            issues = get_open_issues()
+            if issues:
+                issue_number = issues[0]["number"]
+                print(f"[INFO] 사용할 이슈: #{issue_number} - {issues[0]['title']}")
+            else:
+                print("[ERROR] 열린 이슈가 없습니다. test_issue_write.py를 먼저 실행하세요.")
+                return False
+
         test_cases = [
             {
                 "id": 1,
-                "name": "진행 상황 업데이트",
-                "issue_number": 1,
-                "issue_title": "API 문서 작성",
-                "comment": "현재 API 문서 작성을 진행 중입니다. 예상 완료 날짜는 다음주 금요일입니다.",
+                "name": "진행 상황 업데이트 댓글",
+                "comment": "## 진행 상황 업데이트\n\n현재 분석 중입니다.\n\n- [x] 문제 파악\n- [ ] 수정 구현\n- [ ] 테스트\n\n예상 완료: 금주 내",
             },
             {
                 "id": 2,
-                "name": "버그 수정 완료 알림",
-                "issue_number": 2,
-                "issue_title": "환율 API 연결 실패 오류",
-                "comment": "이 버그를 수정했습니다. PR #45에서 확인할 수 있습니다. @maintainer 검토 부탁드립니다.",
-            },
-            {
-                "id": 3,
-                "name": "마크다운 포맷 댓글",
-                "issue_number": 3,
-                "issue_title": "README 한국어 설명 추가",
-                "comment": "## 진행 상황\n- [x] 요구사항 분석\n- [ ] 구현\n- [ ] 테스트\n\n예상 일정: 2주",
+                "name": "수정 완료 알림 댓글",
+                "comment": "수정 완료되었습니다. 다음 배포 시 반영될 예정입니다.\n\n관련 변경사항은 `crawler.py`의 타임아웃 설정을 참고하세요.",
             },
         ]
 
-        print("\n" + "=" * 70)
-        print("[TEST] GitHub Comment Creator (issue_runner) 스킬 테스트")
-        print("=" * 70)
+        for tc in test_cases:
+            self.test_case(tc["id"], tc["name"], issue_number, tc["comment"])
 
-        for test_case in test_cases:
-            self.test_case(
-                test_case["id"],
-                test_case["name"],
-                test_case["issue_number"],
-                test_case["issue_title"],
-                test_case["comment"],
-            )
-
-        # 결과 요약
         total = self.passed + self.failed
-        print(f"\n" + "=" * 70)
+        print(f"\n{'=' * 70}")
         print("[RESULT] 테스트 결과 요약")
         print("=" * 70)
         print(f"[PASS] 성공: {self.passed}/{total}")
         print(f"[FAIL] 실패: {self.failed}/{total}")
-        print(f"[RATE] 성공률: {(self.passed/total)*100:.1f}%")
+        if total > 0:
+            print(f"[RATE] 성공률: {(self.passed/total)*100:.1f}%")
         print("=" * 70)
 
         return self.failed == 0
 
 
 if __name__ == "__main__":
+    target = int(sys.argv[1]) if len(sys.argv) > 1 else None
     tester = GitHubCommentCreatorTest()
-    success = tester.run_all_tests()
+    success = tester.run_all_tests(target_issue=target)
     exit(0 if success else 1)
