@@ -120,7 +120,13 @@ class IndustryCrawler:
         return result
 
     def _get_last_month_avg_with_cache(self) -> Dict[str, float]:
-        """전월평균 조회 - BBS 스크래핑 성공 시 캐시 저장, 실패 시 캐시 반환"""
+        """
+        전월평균 조회 (우선순위)
+        1. nonferrous.or.kr BBS 스크래핑
+        2. data.json 캐시 (이전 성공값)
+        3. LME_PREV_MONTH_AVGS 환경변수 (수동 입력 fallback)
+        """
+        import re as _re
         now = datetime.now(JST)
         last_month_dt = now.replace(day=1) - timedelta(days=1)
         cache_key = last_month_dt.strftime('%Y%m')  # 예: '202605'
@@ -138,21 +144,34 @@ class IndustryCrawler:
             except Exception:
                 pass
 
-        # BBS에서 새로 조회 시도
+        # 1순위: BBS 스크래핑
         fresh = self._scrape_nonferrous_last_month_bbs()
         if fresh:
-            # 성공하면 캐시 저장
             self.data['last_month_avg_cache'] = {'month': cache_key, 'prices': fresh}
             logger.info(f"  ✓ 전월평균 BBS 조회 성공 → 캐시 저장")
             return fresh
-        elif cached:
-            # 실패하면 캐시 사용
+
+        # 2순위: 캐시
+        if cached:
             self.data['last_month_avg_cache'] = {'month': cache_key, 'prices': cached}
             logger.warning(f"  ⚠ BBS 조회 실패 → 캐시값 사용: {cached}")
             return cached
-        else:
-            logger.warning(f"  ⚠ BBS 조회 실패 + 캐시 없음 → 전월평균 null")
-            return {}
+
+        # 3순위: 환경변수 LME_PREV_MONTH_AVGS
+        # 형식: {"구리(Copper)": 13507.13, "알루미늄(Aluminum)": 3670.18, "아연(Zinc)": 3488.21, "니켈(Nickel)": 18805.0}
+        env_val = os.getenv('LME_PREV_MONTH_AVGS', '')
+        if env_val:
+            try:
+                env_prices = json.loads(env_val)
+                if isinstance(env_prices, dict) and env_prices:
+                    self.data['last_month_avg_cache'] = {'month': cache_key, 'prices': env_prices}
+                    logger.info(f"  ✓ 전월평균 환경변수(LME_PREV_MONTH_AVGS) 사용: {env_prices}")
+                    return env_prices
+            except (json.JSONDecodeError, ValueError) as e:
+                logger.warning(f"  ⚠ LME_PREV_MONTH_AVGS 파싱 오류: {e}")
+
+        logger.warning(f"  ⚠ 전월평균 모든 소스 실패 → null")
+        return {}
 
     def _scrape_nonferrous_last_month_bbs(self) -> Dict[str, float]:
         """
