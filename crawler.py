@@ -97,16 +97,18 @@ class IndustryCrawler:
 
         def fetch_month_prices(yyyymm: str) -> Dict[str, float]:
             """특정 월 전체 품목 평균가 조회 → {metal_name: price}"""
+            # mcla_cd 없이 조회하면 모든 비철금속 표시
             url = (
                 "https://www.kprc.or.kr/RawMaterial.do"
-                "?lcla_cd=0100&mcla_cd=50&board_id=raw01"
-                f"&itemst_cd=0100&board=0&page=1&page_sz=20"
+                "?lcla_cd=0100&board_id=raw01"
+                f"&itemst_cd=0100&board=0&page=1&page_sz=50"
                 f"&from_yyyymm={yyyymm}&to_yyyymm={yyyymm}"
             )
             resp = requests.get(url, headers=self.headers, timeout=10)
             resp.encoding = 'euc-kr'
             soup = BeautifulSoup(resp.text, 'html.parser')
             prices = {}
+            all_rows = []
             for table in soup.find_all('table'):
                 for row in table.find_all('tr'):
                     cells = row.find_all('td')
@@ -114,7 +116,7 @@ class IndustryCrawler:
                         continue
                     item_name = cells[0].get_text(strip=True)
                     price_str = cells[2].get_text(strip=True).replace(',', '')
-                    # 품목명이 알려진 금속인지 확인
+                    all_rows.append(f"{item_name}={price_str}")
                     for kr_key, metal_name in kr_to_metal.items():
                         if kr_key in item_name:
                             try:
@@ -124,7 +126,8 @@ class IndustryCrawler:
                             except ValueError:
                                 pass
                             break
-            logger.info(f"  [KPRC] {yyyymm} 조회 결과: {prices}")
+            logger.info(f"  [KPRC] {yyyymm} 전체행: {all_rows}")
+            logger.info(f"  [KPRC] {yyyymm} 매칭결과: {prices}")
             return prices
 
         try:
