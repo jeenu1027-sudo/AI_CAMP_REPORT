@@ -53,141 +53,123 @@ class IndustryCrawler:
 
     def fetch_lme_prices(self) -> None:
         """
-        LME 비철금속가격 수집
-        현재가/전일대비: 네이버 금융 스크래핑
-        전월평균: 한국비철금속협회 게시판 스크래핑
-        당월평균: data.json 누적 가격으로 직접 계산
+        LME 비철금속가격 수집 - 전체를 nonferrous.or.kr/stats/?act=sub3 에서 가져옴
+        현재가/전일가/전일대비/당월평균/전월평균: 일자별 LME 시세 테이블 파싱
         """
         logger.info("LME 비철금속가격 수집 중...")
         try:
-            prices = self._scrape_naver_metals()
+            prices = self._scrape_nonferrous_daily()
             if prices:
-                # 오늘 현재가를 가격 히스토리에 누적
-                self._accumulate_price_history(prices)
-
-                last_month_avgs = self._scrape_nonferrous_last_month()
-                this_month_avgs = self._calc_this_month_avg()
-
-                for p in prices:
-                    metal = p['metal']
-                    p['prev_price'] = round(p['price'] - p['change_value'], 2)
-                    p['this_month_avg'] = this_month_avgs.get(metal)
-                    p['last_month_avg'] = last_month_avgs.get(metal)
-                    this_avg = p['this_month_avg']
-                    last_avg = p['last_month_avg']
-                    if this_avg and last_avg:
-                        p['month_change'] = f"{((this_avg - last_avg) / last_avg * 100):+.2f}%"
-                    else:
-                        p['month_change'] = None
                 self.data['lme_prices'] = prices
                 logger.info(f"✓ LME 비철금속가격 {len(prices)}개 로드 완료")
             else:
-                logger.warning("⚠ 네이버 금융 스크래핑 실패 - 샘플 데이터 사용")
+                logger.warning("⚠ 비철협회 스크래핑 실패 - 샘플 데이터 사용")
                 self.data['lme_prices'] = self._get_sample_lme_prices()
         except Exception as e:
             logger.error(f"❌ LME 비철금속가격 수집 중 오류: {e}")
             self.data['lme_prices'] = self._get_sample_lme_prices()
 
-    def _accumulate_price_history(self, prices: List[Dict]) -> None:
-        """오늘 가격을 data.json 내 price_history에 누적 (당월평균 계산용)"""
-        data_path = Path('data.json')
-        today = datetime.now(JST).strftime('%Y-%m-%d')
-        this_month = datetime.now(JST).strftime('%Y%m')
-
-        existing = {}
-        if data_path.exists():
-            try:
-                with open(data_path, 'r', encoding='utf-8') as f:
-                    existing = json.load(f)
-            except Exception:
-                pass
-
-        history = existing.get('price_history', {})
-        # 당월 데이터만 유지 (전월 이전 데이터 정리)
-        history = {d: v for d, v in history.items() if d[:7].replace('-', '') >= this_month[:6]}
-        history[today] = {p['metal']: p['price'] for p in prices}
-        self.data['price_history'] = history
-
-    def _calc_this_month_avg(self) -> Dict[str, float]:
-        """price_history에서 당월 평균가 계산"""
-        this_month = datetime.now(JST).strftime('%Y-%m')
-        history = self.data.get('price_history', {})
-        sums: Dict[str, List[float]] = {}
-        for date_str, metal_prices in history.items():
-            if date_str.startswith(this_month):
-                for metal, price in metal_prices.items():
-                    sums.setdefault(metal, []).append(price)
-        result = {}
-        for metal, vals in sums.items():
-            result[metal] = round(sum(vals) / len(vals), 2)
-        logger.info(f"  당월평균 계산: {result}")
-        return result
-
-    def _scrape_nonferrous_last_month(self) -> Dict[str, float]:
+    def _scrape_nonferrous_daily(self) -> Optional[List[Dict]]:
         """
-        한국비철금속협회(nonferrous.or.kr) 게시판에서 전월 LME 평균가격 스크래핑
-        게시글 본문 형식: "Copper : 13507.13" 줄 단위 텍스트
+        한국비철금속협회 일자별 LME 시세 페이지 스크래핑
+        URL: https://www.nonferrous.or.kr/stats/?act=sub3
+        테이블: 일자 | Cu | Al | Zn | Pb | Ni | Sn
         """
         import re
+        base_url = "https://www.nonferrous.or.kr/stats/?act=sub3"
         now = datetime.now(JST)
+        this_month = now.strftime('%Y.%m')  # 예: 2026.06
         last_month_dt = now.replace(day=1) - timedelta(days=1)
-        last_month_year = last_month_dt.year
-        last_month_num = last_month_dt.month
+        last_month = last_month_dt.strftime('%Y.%m')  # 예: 2026.05
 
-        # 본문 텍스트 패턴 → 내부 metal_name 매핑
-        metal_patterns = {
-            r'Copper':           '구리(Copper)',
-            r'(?:Primary\s+)?Alumin(?:i)?um': '알루미늄(Aluminum)',
-            r'Zinc':             '아연(Zinc)',
-            r'Nickel':           '니켈(Nickel)',
+        # 컬럼 인덱스 → metal_name 매핑 (0=일자, 1=Cu, 2=Al, 3=Zn, 4=Pb, 5=Ni, 6=Sn)
+        col_to_metal = {
+            1: '구리(Copper)',
+            2: '알루미늄(Aluminum)',
+            3: '아연(Zinc)',
+            5: '니켈(Nickel)',
         }
 
-        try:
-            list_url = "https://www.nonferrous.or.kr/bbs/?bid=price"
-            resp = requests.get(list_url, headers=self.headers, timeout=10)
+        def fetch_rows(page: int) -> List[List]:
+            """지정 페이지의 테이블 행을 파싱해 반환"""
+            url = f"{base_url}&page={page}"
+            resp = requests.get(url, headers=self.headers, timeout=10)
             resp.encoding = 'utf-8'
             soup = BeautifulSoup(resp.text, 'html.parser')
+            rows = []
+            for table in soup.find_all('table'):
+                for tr in table.find_all('tr'):
+                    cells = [td.get_text(strip=True) for td in tr.find_all('td')]
+                    if len(cells) >= 6 and re.match(r'\d{4}\.\d{2}\.\d{2}', cells[0]):
+                        rows.append(cells)
+            return rows
 
-            # 게시글 목록에서 "N월 LME 평균가격" 링크 탐색
-            target_url = None
-            for a in soup.find_all('a', href=True):
-                title = a.get_text(strip=True)
-                href = a['href']
-                if 'LME 평균가격' in title or 'LME평균가격' in title:
-                    if str(last_month_year) in title and f'{last_month_num}월' in title:
-                        base = 'https://www.nonferrous.or.kr/bbs/'
-                        target_url = base + href if href.startswith('?') else href
-                        logger.info(f"  [비철협회] 전월 게시글 발견: {title}")
-                        break
+        # 페이지 1: 현재가/전일가 + 당월평균 데이터
+        rows_p1 = fetch_rows(1)
+        if not rows_p1:
+            logger.warning("  ⚠ [비철협회] 테이블 데이터 없음")
+            return None
 
-            if not target_url:
-                logger.warning(f"  ⚠ [비철협회] {last_month_year}년 {last_month_num}월 LME 평균가격 게시글 없음")
-                return {}
+        logger.info(f"  [비철협회] p1 최근행: {rows_p1[:3]}")
 
-            # 게시글 상세 - 전체 텍스트에서 정규식으로 파싱
-            detail_resp = requests.get(target_url, headers=self.headers, timeout=10)
-            detail_resp.encoding = 'utf-8'
-            body_text = BeautifulSoup(detail_resp.text, 'html.parser').get_text()
-            logger.info(f"  [비철협회] 본문 일부: {body_text[body_text.find('Copper')-10:body_text.find('Copper')+60]}")
+        # 페이지 2: 전월 데이터 보완
+        rows_p2 = fetch_rows(2)
 
-            prices = {}
-            for pattern, metal_name in metal_patterns.items():
-                # "MetalName : 12345.67" 또는 "MetalName 12345.67" 형식 모두 허용
-                m = re.search(
-                    rf'{pattern}\s*[:\s]\s*([\d,]+\.?\d*)',
-                    body_text, re.IGNORECASE
-                )
-                if m:
-                    price_val = float(m.group(1).replace(',', ''))
-                    if price_val > 100:
-                        prices[metal_name] = price_val
+        all_rows = rows_p1 + rows_p2
 
-            logger.info(f"  ✓ [비철협회] 전월평균: {prices}")
-            return prices
+        # 현재가(최신), 전일가(두 번째) 추출
+        current_row = rows_p1[0]
+        prev_row = rows_p1[1] if len(rows_p1) > 1 else rows_p1[0]
+        current_date = current_row[0]  # 예: 2026.06.16
 
-        except Exception as e:
-            logger.warning(f"  ⚠ [비철협회] 전월평균 조회 실패: {e}")
-            return {}
+        # 당월/전월 평균 계산
+        this_sums: Dict[int, List[float]] = {c: [] for c in col_to_metal}
+        last_sums: Dict[int, List[float]] = {c: [] for c in col_to_metal}
+        for row in all_rows:
+            date_prefix = row[0][:7]  # 2026.06
+            for col in col_to_metal:
+                try:
+                    val = float(row[col].replace(',', ''))
+                    if val > 0:
+                        if date_prefix == this_month:
+                            this_sums[col].append(val)
+                        elif date_prefix == last_month:
+                            last_sums[col].append(val)
+                except (ValueError, IndexError):
+                    pass
+
+        result = []
+        for col, metal_name in col_to_metal.items():
+            try:
+                price = float(current_row[col].replace(',', ''))
+                prev_price = float(prev_row[col].replace(',', ''))
+                change_value = round(price - prev_price, 2)
+                change_pct = f"{(change_value / prev_price * 100):+.2f}%" if prev_price else '-'
+
+                this_avg = round(sum(this_sums[col]) / len(this_sums[col]), 2) if this_sums[col] else None
+                last_avg = round(sum(last_sums[col]) / len(last_sums[col]), 2) if last_sums[col] else None
+                month_change = None
+                if this_avg and last_avg:
+                    month_change = f"{((this_avg - last_avg) / last_avg * 100):+.2f}%"
+
+                result.append({
+                    'metal': metal_name,
+                    'price': price,
+                    'prev_price': prev_price,
+                    'change_value': change_value,
+                    'change': change_pct,
+                    'this_month_avg': this_avg,
+                    'last_month_avg': last_avg,
+                    'month_change': month_change,
+                    'unit': 'USD/톤',
+                    'source': '한국비철금속협회 (LME)',
+                    'date': current_date.replace('.', '-')[:7] + '-' + current_date[8:10],
+                })
+                logger.info(f"  ✓ {metal_name}: 현재={price}, 전일={prev_price}, 당월avg={this_avg}, 전월avg={last_avg}")
+            except (ValueError, IndexError) as e:
+                logger.warning(f"  ⚠ {metal_name} 파싱 오류: {e}")
+
+        return result if result else None
 
     def _scrape_naver_metals(self) -> Optional[List[Dict[str, Any]]]:
         """
