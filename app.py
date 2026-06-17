@@ -18,6 +18,7 @@ GITHUB_TOKEN = os.getenv("GITHUB_TOKEN")
 from crawler import IndustryCrawler
 from error_handler import error_metrics, health_check
 from rubric_validator import validate_rubric
+from history import append_history
 
 # 로깅 설정
 logging.basicConfig(
@@ -52,6 +53,7 @@ def scheduled_update():
         logger.info(f"스케줄된 업데이트 실행: {datetime.now(JST).strftime('%Y-%m-%d %H:%M:%S %Z')}")
         crawler = IndustryCrawler()
         crawler.run()
+        append_history()
         logger.info("✓ 스케줄 업데이트 완료")
     except Exception as e:
         logger.error(f"❌ 스케줄 업데이트 실패: {e}")
