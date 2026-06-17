@@ -136,26 +136,34 @@ class IndustryCrawler:
             r'Zinc':                        '아연(Zinc)',
             r'Nickel':                      '니켈(Nickel)',
         }
+        headers = {
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+            'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+            'Accept-Language': 'ko-KR,ko;q=0.9,en;q=0.8',
+            'Referer': 'https://www.nonferrous.or.kr/',
+        }
         try:
             resp = requests.get("https://www.nonferrous.or.kr/bbs/?bid=price",
-                                headers=self.headers, timeout=10)
+                                headers=headers, timeout=10)
             resp.encoding = 'utf-8'
             soup = BeautifulSoup(resp.text, 'html.parser')
 
+            all_links = [(a.get_text(strip=True), a['href']) for a in soup.find_all('a', href=True) if a.get_text(strip=True)]
+            logger.info(f"  [BBS] 링크 {len(all_links)}개 발견, 샘플: {all_links[:5]}")
+
             target_url = None
-            for a in soup.find_all('a', href=True):
-                title = a.get_text(strip=True)
-                href = a['href']
+            keyword = f'{last_month_num}월'
+            for title, href in all_links:
                 if ('LME 평균가격' in title or 'LME평균가격' in title) \
                         and str(last_month_year) in title \
-                        and f'{last_month_num}월' in title:
+                        and keyword in title:
                     target_url = 'https://www.nonferrous.or.kr/bbs/' + href \
                         if href.startswith('?') else href
-                    logger.info(f"  [BBS] 전월 게시글: {title}")
+                    logger.info(f"  [BBS] 전월 게시글 발견: {title} → {target_url}")
                     break
 
             if not target_url:
-                logger.warning(f"  ⚠ [BBS] {last_month_year}년 {last_month_num}월 게시글 없음")
+                logger.warning(f"  ⚠ [BBS] '{last_month_year}년 {last_month_num}월 LME 평균가격' 게시글 없음. 검색된 링크: {[t for t,_ in all_links if 'LME' in t]}")
                 return {}
 
             detail = requests.get(target_url, headers=self.headers, timeout=10)
