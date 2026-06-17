@@ -120,7 +120,12 @@ class IndustryCrawler:
         # 현재가(최신), 전일가(두 번째) 추출
         current_row = rows_p1[0]
         prev_row = rows_p1[1] if len(rows_p1) > 1 else rows_p1[0]
-        current_date = current_row[0]  # 예: 2026.06.16
+        # 행 전체에서 날짜 패턴 탐색 (컬럼 위치가 다를 수 있음)
+        current_date = next(
+            (c for c in current_row if re.match(r'\d{4}\.\d{2}\.\d{2}', c)),
+            now.strftime('%Y.%m.%d')
+        )
+        logger.info(f"  [비철협회] current_row={current_row[:4]}, current_date={current_date}")
 
         # 당월/전월 평균 계산
         this_sums: Dict[int, List[float]] = {c: [] for c in col_to_metal}
