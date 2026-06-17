@@ -449,7 +449,6 @@
                 <th>당월평균</th>
                 <th>전월평균</th>
                 <th>전월대비</th>
-                <th>기준일</th>
             </tr></thead><tbody>`;
             prices.forEach(p => {
                 const dayClass = p.change && p.change.includes('-') ? 'price-down' : 'price-up';
@@ -465,7 +464,6 @@
                     <td>${p.this_month_avg ? p.this_month_avg.toLocaleString() : '-'}</td>
                     <td>${p.last_month_avg ? p.last_month_avg.toLocaleString() : '-'}</td>
                     <td class="${monClass}">${p.month_change || '-'}</td>
-                    <td>${p.date || '-'}</td>
                 </tr>`;
             });
             html += '</tbody></table>';
