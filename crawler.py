@@ -507,10 +507,16 @@ class IndustryCrawler:
                 self.data['exchange_rates'] = rates
                 logger.info(f"✓ 환율정보 {len(rates)}개 로드 완료 (출처: 네이버 금융)")
             else:
-                logger.warning("⚠ 네이버 금융 환율 스크래핑 실패 - 샘플 데이터 사용")
+                logger.warning("⚠ 네이버 금융 환율 스크래핑 실패 — 페이지 구조 변경 또는 빈 응답. 샘플 데이터로 대체합니다.")
                 self.data['exchange_rates'] = self._get_sample_exchange_rates()
+        except NetworkError as e:
+            # 네트워크 차단/타임아웃 시 사용자가 원인을 즉시 파악할 수 있도록 메시지 구체화
+            logger.error(f"❌ 환율 API 연결 실패: {e}")
+            logger.error("   원인: 네트워크 차단, DNS 오류, 또는 서버 다운 가능성")
+            logger.error("   조치: 인터넷 연결 확인 후 재시도, 또는 VPN 비활성화 확인")
+            self.data['exchange_rates'] = self._get_sample_exchange_rates()
         except Exception as e:
-            logger.error(f"환율정보 수집 중 오류: {e}")
+            logger.error(f"❌ 환율정보 수집 중 예상치 못한 오류: {type(e).__name__}: {e}")
             self.data['exchange_rates'] = self._get_sample_exchange_rates()
 
     def _scrape_naver_exchange(self) -> Optional[List[Dict[str, Any]]]:
