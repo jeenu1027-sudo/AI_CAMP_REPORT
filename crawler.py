@@ -83,6 +83,7 @@ class IndustryCrawler:
         last_month = last_month_dt.strftime('%Y.%m')  # 예: 2026.05
 
         # 컬럼 인덱스 → metal_name 매핑 (0=일자, 1=Cu, 2=Al, 3=Zn, 4=Pb, 5=Ni, 6=Sn)
+        # 실제 td 구조: [날짜, Cu, Al, Zn, Pb, Ni, Sn] (총 7개)
         col_to_metal = {
             1: '구리(Copper)',
             2: '알루미늄(Aluminum)',
@@ -100,7 +101,10 @@ class IndustryCrawler:
             for table in soup.find_all('table'):
                 for tr in table.find_all('tr'):
                     cells = [td.get_text(strip=True) for td in tr.find_all('td')]
-                    if len(cells) >= 6 and re.match(r'\d{4}\.\d{2}\.\d{2}', cells[0]):
+                    # 날짜 형식: "2026. 06. 16" (공백 포함) → 공백 제거 후 매칭
+                    if len(cells) >= 6 and re.match(r'\d{4}\.\s*\d{2}\.\s*\d{2}', cells[0]):
+                        # 날짜 공백 제거하여 정규화 ("2026. 06. 16" → "2026.06.16")
+                        cells[0] = re.sub(r'\s+', '', cells[0])
                         rows.append(cells)
             return rows
 
@@ -131,7 +135,7 @@ class IndustryCrawler:
         this_sums: Dict[int, List[float]] = {c: [] for c in col_to_metal}
         last_sums: Dict[int, List[float]] = {c: [] for c in col_to_metal}
         for row in all_rows:
-            date_prefix = row[0][:7]  # 2026.06
+            date_prefix = row[0][:7]  # 2026.06 (공백 제거 후)
             for col in col_to_metal:
                 try:
                     val = float(row[col].replace(',', ''))
