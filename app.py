@@ -140,6 +140,7 @@ def update_now():
         logger.info("수동 업데이트 요청")
         crawler = IndustryCrawler()
         crawler.run()
+        append_history()
         logger.info("✓ 수동 업데이트 완료")
         return jsonify({
             'status': '성공',
@@ -202,47 +203,65 @@ def schedule_info():
 
     return jsonify(schedule_info_dict)
 
-if __name__ == '__main__':
-    # 스케줄 설정: 매일 8시 JST
-    # 8:00 AM - 루브릭 검증
+# ──────────────────────────────────────────────
+# 스케줄러 및 초기 크롤러 설정
+# gunicorn(Railway)은 __main__을 호출하지 않으므로 모듈 레벨에서 초기화
+# ──────────────────────────────────────────────
+
+def _start_scheduler():
+    """스케줄러 등록 및 시작 (gunicorn/직접실행 공통)"""
+    # 이미 실행 중이면 중복 등록 방지
+    if scheduler.running:
+        return
+
     scheduler.add_job(
         validate_project_rubric,
         CronTrigger(hour=8, minute=0, timezone=JST),
         id='rubric_validation',
-        name='Daily rubric validation at 8:00 JST'
+        name='Daily rubric validation at 8:00 JST',
+        replace_existing=True,
     )
-
-    # 8:01 AM - 데이터 수집 업데이트
     scheduler.add_job(
         scheduled_update,
         CronTrigger(hour=8, minute=1, timezone=JST),
         id='scheduled_update',
-        name='Daily update at 8:01 JST'
+        name='Daily update at 8:01 JST',
+        replace_existing=True,
     )
 
     try:
         scheduler.start()
-        logger.info("✓ APScheduler 시작 완료")
+        logger.info("✓ APScheduler 시작 완료 (매일 08:00/08:01 JST)")
     except Exception as e:
         logger.error(f"❌ APScheduler 시작 실패: {e}")
         raise
 
-    # 초기 데이터 수집을 백그라운드에서 실행 (Flask 서버 시작을 막지 않음)
-    def init_crawler():
+
+def _start_init_crawler():
+    """초기 데이터 수집 (백그라운드, 서버 시작을 막지 않음)"""
+    def _run():
         try:
             logger.info("초기 데이터 수집 시작 (백그라운드)...")
             crawler = IndustryCrawler()
             crawler.run()
+            append_history()
             logger.info("✓ 초기 데이터 수집 완료")
         except Exception as e:
             logger.error(f"❌ 초기 크롤링 오류: {e}")
 
-    threading.Thread(target=init_crawler, daemon=True).start()
+    threading.Thread(target=_run, daemon=True).start()
 
+
+# gunicorn / Railway 환경에서도 스케줄러가 동작하도록 모듈 임포트 시 실행
+_start_scheduler()
+_start_init_crawler()
+
+
+if __name__ == '__main__':
     logger.info("=" * 50)
-    logger.info("✓ Flask 서버 시작")
-    logger.info("  📋 루브릭 검증: 매일 8:00 AM JST")
-    logger.info("  📊 데이터 업데이트: 매일 8:01 AM JST")
+    logger.info("✓ Flask 서버 시작 (직접 실행)")
+    logger.info("  루브릭 검증: 매일 8:00 AM JST")
+    logger.info("  데이터 업데이트: 매일 8:01 AM JST")
     logger.info("  헬스 체크: /api/health")
     logger.info("=" * 50)
 
