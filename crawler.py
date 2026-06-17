@@ -163,7 +163,7 @@ class IndustryCrawler:
                     'month_change': month_change,
                     'unit': 'USD/톤',
                     'source': '한국비철금속협회 (LME)',
-                    'date': current_date.replace('.', '-')[:7] + '-' + current_date[8:10],
+                    'date': current_date,
                 })
                 logger.info(f"  ✓ {metal_name}: 현재={price}, 전일={prev_price}, 당월avg={this_avg}, 전월avg={last_avg}")
             except (ValueError, IndexError) as e:
