@@ -126,23 +126,20 @@ class IndustryCrawler:
     def _scrape_nonferrous_last_month(self) -> Dict[str, float]:
         """
         한국비철금속협회(nonferrous.or.kr) 게시판에서 전월 LME 평균가격 스크래핑
-        게시글 목록에서 '전월 LME 평균가격' 게시글을 찾아 상세 내용 파싱
+        게시글 본문 형식: "Copper : 13507.13" 줄 단위 텍스트
         """
+        import re
         now = datetime.now(JST)
         last_month_dt = now.replace(day=1) - timedelta(days=1)
         last_month_year = last_month_dt.year
         last_month_num = last_month_dt.month
 
-        metal_keywords = {
-            '구리':    '구리(Copper)',
-            'Copper':  '구리(Copper)',
-            '알루미늄': '알루미늄(Aluminum)',
-            'Aluminium': '알루미늄(Aluminum)',
-            'Aluminum':  '알루미늄(Aluminum)',
-            '아연':    '아연(Zinc)',
-            'Zinc':    '아연(Zinc)',
-            '니켈':    '니켈(Nickel)',
-            'Nickel':  '니켈(Nickel)',
+        # 본문 텍스트 패턴 → 내부 metal_name 매핑
+        metal_patterns = {
+            r'Copper':           '구리(Copper)',
+            r'(?:Primary\s+)?Alumin(?:i)?um': '알루미늄(Aluminum)',
+            r'Zinc':             '아연(Zinc)',
+            r'Nickel':           '니켈(Nickel)',
         }
 
         try:
@@ -157,41 +154,33 @@ class IndustryCrawler:
                 title = a.get_text(strip=True)
                 href = a['href']
                 if 'LME 평균가격' in title or 'LME평균가격' in title:
-                    # 제목에서 연도/월 확인
                     if str(last_month_year) in title and f'{last_month_num}월' in title:
-                        target_url = 'https://www.nonferrous.or.kr/bbs/' + href if href.startswith('?') else href
-                        logger.info(f"  [비철협회] 전월 게시글 발견: {title} → {target_url}")
+                        base = 'https://www.nonferrous.or.kr/bbs/'
+                        target_url = base + href if href.startswith('?') else href
+                        logger.info(f"  [비철협회] 전월 게시글 발견: {title}")
                         break
 
             if not target_url:
                 logger.warning(f"  ⚠ [비철협회] {last_month_year}년 {last_month_num}월 LME 평균가격 게시글 없음")
                 return {}
 
-            # 게시글 상세 파싱
+            # 게시글 상세 - 전체 텍스트에서 정규식으로 파싱
             detail_resp = requests.get(target_url, headers=self.headers, timeout=10)
             detail_resp.encoding = 'utf-8'
-            detail_soup = BeautifulSoup(detail_resp.text, 'html.parser')
+            body_text = BeautifulSoup(detail_resp.text, 'html.parser').get_text()
+            logger.info(f"  [비철협회] 본문 일부: {body_text[body_text.find('Copper')-10:body_text.find('Copper')+60]}")
 
             prices = {}
-            for table in detail_soup.find_all('table'):
-                for row in table.find_all('tr'):
-                    cells = row.find_all('td')
-                    if len(cells) < 2:
-                        continue
-                    name_cell = cells[0].get_text(strip=True)
-                    # 모든 td에서 숫자가 있는 셀을 가격으로 사용
-                    for kr_key, metal_name in metal_keywords.items():
-                        if kr_key in name_cell and metal_name not in prices:
-                            for cell in cells[1:]:
-                                price_str = cell.get_text(strip=True).replace(',', '')
-                                try:
-                                    price_val = float(price_str)
-                                    if price_val > 100:
-                                        prices[metal_name] = price_val
-                                        break
-                                except ValueError:
-                                    continue
-                            break
+            for pattern, metal_name in metal_patterns.items():
+                # "MetalName : 12345.67" 또는 "MetalName 12345.67" 형식 모두 허용
+                m = re.search(
+                    rf'{pattern}\s*[:\s]\s*([\d,]+\.?\d*)',
+                    body_text, re.IGNORECASE
+                )
+                if m:
+                    price_val = float(m.group(1).replace(',', ''))
+                    if price_val > 100:
+                        prices[metal_name] = price_val
 
             logger.info(f"  ✓ [비철협회] 전월평균: {prices}")
             return prices
