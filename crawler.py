@@ -89,7 +89,7 @@ class IndustryCrawler:
             self.data['lme_prices'] = self._get_sample_lme_prices()
 
     def _save_price_history(self, prices: List[Dict]) -> None:
-        """오늘 현재가를 data.json price_history에 누적"""
+        """오늘 현재가를 data.json price_history에 누적. 당월 데이터가 부족하면 Naver 히스토리로 보완"""
         data_path = Path(__file__).parent / 'data.json'
         today = datetime.now(JST).strftime('%Y-%m-%d')
         this_month = datetime.now(JST).strftime('%Y-%m')
@@ -104,7 +104,78 @@ class IndustryCrawler:
         # 당월 데이터만 유지
         history = {d: v for d, v in history.items() if d[:7] >= this_month}
         history[today] = {p['metal']: p['price'] for p in prices}
+
+        # 당월 누적 데이터가 3일 미만이면 Naver 히스토리로 보완
+        this_month_days = [d for d in history if d.startswith(this_month)]
+        if len(this_month_days) < 3:
+            logger.info("  당월 데이터 부족 → Naver 히스토리로 보완 시도")
+            historical = self._fetch_naver_metal_history()
+            if historical:
+                for date_str, metal_prices in historical.items():
+                    if date_str.startswith(this_month) and date_str not in history:
+                        history[date_str] = metal_prices
+                logger.info(f"  ✓ 히스토리 보완 완료: {len([d for d in history if d.startswith(this_month)])}일치 데이터")
+
         self.data['price_history'] = history
+
+    # Naver Finance 금속별 마켓 인덱스 코드
+    _NAVER_METAL_CODES = {
+        '구리(Copper)':      'METALCU',
+        '알루미늄(Aluminum)': 'METALAL',
+        '아연(Zinc)':        'METALZN',
+        '니켈(Nickel)':      'METALNI',
+    }
+
+    def _fetch_naver_metal_history(self, count: int = 25) -> Dict[str, Dict[str, float]]:
+        """
+        Naver Finance 비철금속 일별 히스토리 수집
+        엔드포인트: /marketindex/worldDetailQuote.naver?marketindexCd=METALCU&count=25&requestType=0
+        반환: {날짜: {금속명: 가격}}
+        """
+        result: Dict[str, Dict[str, float]] = {}
+        for metal_name, code in self._NAVER_METAL_CODES.items():
+            url = (f"https://finance.naver.com/marketindex/worldDetailQuote.naver"
+                   f"?marketindexCd={code}&count={count}&requestType=0")
+            try:
+                resp = requests.get(url, headers=self.headers,
+                                    timeout=TimeoutConfig.METALS_API_TIMEOUT)
+                resp.encoding = 'euc-kr'
+                # 응답이 JSON인지 HTML인지 확인
+                text = resp.text.strip()
+                if text.startswith('[') or text.startswith('{'):
+                    # JSON 형식
+                    import json as _json
+                    rows = _json.loads(text)
+                    for row in rows:
+                        date_str = str(row.get('localDate', ''))
+                        close = row.get('closePrice') or row.get('close') or row.get('price')
+                        if date_str and close:
+                            # 날짜 형식: 20260601 → 2026-06-01
+                            if len(date_str) == 8:
+                                date_str = f"{date_str[:4]}-{date_str[4:6]}-{date_str[6:]}"
+                            result.setdefault(date_str, {})[metal_name] = float(str(close).replace(',', ''))
+                else:
+                    # HTML 테이블 형식 파싱
+                    from bs4 import BeautifulSoup as _BS
+                    import re as _re
+                    soup = _BS(resp.text, 'html.parser')
+                    for tr in soup.find_all('tr'):
+                        tds = tr.find_all('td')
+                        if len(tds) >= 2:
+                            date_raw = tds[0].get_text(strip=True)
+                            price_raw = tds[1].get_text(strip=True).replace(',', '')
+                            # 날짜 형식: 2026.06.01
+                            dm = _re.match(r'(\d{4})\.(\d{2})\.(\d{2})', date_raw)
+                            if dm and price_raw:
+                                try:
+                                    date_str = f"{dm.group(1)}-{dm.group(2)}-{dm.group(3)}"
+                                    result.setdefault(date_str, {})[metal_name] = float(price_raw)
+                                except ValueError:
+                                    pass
+                logger.info(f"  ✓ {metal_name} 히스토리 수집")
+            except Exception as e:
+                logger.warning(f"  ⚠ {metal_name} 히스토리 수집 실패: {e}")
+        return result
 
     def _calc_this_month_avg(self) -> Dict[str, float]:
         """price_history에서 당월 평균가 계산"""
