@@ -55,19 +55,30 @@ class IndustryCrawler:
         """
         LME 비철금속가격 수집
         현재가/전일대비: 네이버 금융 스크래핑
-        당월평균/전월평균: KPRC(한국원자재가격정보) 스크래핑
+        전월평균: 한국비철금속협회 게시판 스크래핑
+        당월평균: data.json 누적 가격으로 직접 계산
         """
         logger.info("LME 비철금속가격 수집 중...")
         try:
             prices = self._scrape_naver_metals()
             if prices:
-                monthly_avgs = self._scrape_kprc_monthly()
+                # 오늘 현재가를 가격 히스토리에 누적
+                self._accumulate_price_history(prices)
+
+                last_month_avgs = self._scrape_nonferrous_last_month()
+                this_month_avgs = self._calc_this_month_avg()
+
                 for p in prices:
-                    avgs = monthly_avgs.get(p['metal'], {})
+                    metal = p['metal']
                     p['prev_price'] = round(p['price'] - p['change_value'], 2)
-                    p['this_month_avg'] = avgs.get('this_month_avg')
-                    p['last_month_avg'] = avgs.get('last_month_avg')
-                    p['month_change'] = avgs.get('month_change')
+                    p['this_month_avg'] = this_month_avgs.get(metal)
+                    p['last_month_avg'] = last_month_avgs.get(metal)
+                    this_avg = p['this_month_avg']
+                    last_avg = p['last_month_avg']
+                    if this_avg and last_avg:
+                        p['month_change'] = f"{((this_avg - last_avg) / last_avg * 100):+.2f}%"
+                    else:
+                        p['month_change'] = None
                 self.data['lme_prices'] = prices
                 logger.info(f"✓ LME 비철금속가격 {len(prices)}개 로드 완료")
             else:
@@ -77,80 +88,117 @@ class IndustryCrawler:
             logger.error(f"❌ LME 비철금속가격 수집 중 오류: {e}")
             self.data['lme_prices'] = self._get_sample_lme_prices()
 
-    def _scrape_kprc_monthly(self) -> Dict[str, Dict]:
+    def _accumulate_price_history(self, prices: List[Dict]) -> None:
+        """오늘 가격을 data.json 내 price_history에 누적 (당월평균 계산용)"""
+        data_path = Path('data.json')
+        today = datetime.now(JST).strftime('%Y-%m-%d')
+        this_month = datetime.now(JST).strftime('%Y%m')
+
+        existing = {}
+        if data_path.exists():
+            try:
+                with open(data_path, 'r', encoding='utf-8') as f:
+                    existing = json.load(f)
+            except Exception:
+                pass
+
+        history = existing.get('price_history', {})
+        # 당월 데이터만 유지 (전월 이전 데이터 정리)
+        history = {d: v for d, v in history.items() if d[:7].replace('-', '') >= this_month[:6]}
+        history[today] = {p['metal']: p['price'] for p in prices}
+        self.data['price_history'] = history
+
+    def _calc_this_month_avg(self) -> Dict[str, float]:
+        """price_history에서 당월 평균가 계산"""
+        this_month = datetime.now(JST).strftime('%Y-%m')
+        history = self.data.get('price_history', {})
+        sums: Dict[str, List[float]] = {}
+        for date_str, metal_prices in history.items():
+            if date_str.startswith(this_month):
+                for metal, price in metal_prices.items():
+                    sums.setdefault(metal, []).append(price)
+        result = {}
+        for metal, vals in sums.items():
+            result[metal] = round(sum(vals) / len(vals), 2)
+        logger.info(f"  당월평균 계산: {result}")
+        return result
+
+    def _scrape_nonferrous_last_month(self) -> Dict[str, float]:
         """
-        KPRC(한국원자재가격정보) 사이트에서 당월/전월 LME 평균가 스크래핑
-        한 번에 전체 목록을 가져와 품목명(cells[0])으로 각 금속 행을 매칭
-        테이블 구조: cells[0]=품목명(한글), cells[1]=단위, cells[2]=가격
+        한국비철금속협회(nonferrous.or.kr) 게시판에서 전월 LME 평균가격 스크래핑
+        게시글 목록에서 '전월 LME 평균가격' 게시글을 찾아 상세 내용 파싱
         """
         now = datetime.now(JST)
-        this_month = now.strftime('%Y%m')
-        last_month = (now.replace(day=1) - timedelta(days=1)).strftime('%Y%m')
+        last_month_dt = now.replace(day=1) - timedelta(days=1)
+        last_month_year = last_month_dt.year
+        last_month_num = last_month_dt.month
 
-        # KPRC 품목명(한글 키워드) → 내부 metal_name 매핑
-        kr_to_metal = {
+        metal_keywords = {
             '구리':    '구리(Copper)',
+            'Copper':  '구리(Copper)',
             '알루미늄': '알루미늄(Aluminum)',
+            'Aluminium': '알루미늄(Aluminum)',
+            'Aluminum':  '알루미늄(Aluminum)',
             '아연':    '아연(Zinc)',
+            'Zinc':    '아연(Zinc)',
             '니켈':    '니켈(Nickel)',
+            'Nickel':  '니켈(Nickel)',
         }
 
-        def fetch_month_prices(yyyymm: str) -> Dict[str, float]:
-            """특정 월 전체 품목 평균가 조회 → {metal_name: price}"""
-            # mcla_cd 없이 조회하면 모든 비철금속 표시
-            url = (
-                "https://www.kprc.or.kr/RawMaterial.do"
-                "?lcla_cd=0100&board_id=raw01"
-                f"&itemst_cd=0100&board=0&page=1&page_sz=50"
-                f"&from_yyyymm={yyyymm}&to_yyyymm={yyyymm}"
-            )
-            resp = requests.get(url, headers=self.headers, timeout=10)
-            resp.encoding = 'euc-kr'
+        try:
+            list_url = "https://www.nonferrous.or.kr/bbs/?bid=price"
+            resp = requests.get(list_url, headers=self.headers, timeout=10)
+            resp.encoding = 'utf-8'
             soup = BeautifulSoup(resp.text, 'html.parser')
+
+            # 게시글 목록에서 "N월 LME 평균가격" 링크 탐색
+            target_url = None
+            for a in soup.find_all('a', href=True):
+                title = a.get_text(strip=True)
+                href = a['href']
+                if 'LME 평균가격' in title or 'LME평균가격' in title:
+                    # 제목에서 연도/월 확인
+                    if str(last_month_year) in title and f'{last_month_num}월' in title:
+                        target_url = 'https://www.nonferrous.or.kr/bbs/' + href if href.startswith('?') else href
+                        logger.info(f"  [비철협회] 전월 게시글 발견: {title} → {target_url}")
+                        break
+
+            if not target_url:
+                logger.warning(f"  ⚠ [비철협회] {last_month_year}년 {last_month_num}월 LME 평균가격 게시글 없음")
+                return {}
+
+            # 게시글 상세 파싱
+            detail_resp = requests.get(target_url, headers=self.headers, timeout=10)
+            detail_resp.encoding = 'utf-8'
+            detail_soup = BeautifulSoup(detail_resp.text, 'html.parser')
+
             prices = {}
-            all_rows = []
-            for table in soup.find_all('table'):
+            for table in detail_soup.find_all('table'):
                 for row in table.find_all('tr'):
                     cells = row.find_all('td')
-                    if len(cells) < 3:
+                    if len(cells) < 2:
                         continue
-                    item_name = cells[0].get_text(strip=True)
-                    price_str = cells[2].get_text(strip=True).replace(',', '')
-                    all_rows.append(f"{item_name}={price_str}")
-                    for kr_key, metal_name in kr_to_metal.items():
-                        if kr_key in item_name:
-                            try:
-                                price_val = float(price_str)
-                                if price_val > 100:
-                                    prices[metal_name] = price_val
-                            except ValueError:
-                                pass
+                    name_cell = cells[0].get_text(strip=True)
+                    # 모든 td에서 숫자가 있는 셀을 가격으로 사용
+                    for kr_key, metal_name in metal_keywords.items():
+                        if kr_key in name_cell and metal_name not in prices:
+                            for cell in cells[1:]:
+                                price_str = cell.get_text(strip=True).replace(',', '')
+                                try:
+                                    price_val = float(price_str)
+                                    if price_val > 100:
+                                        prices[metal_name] = price_val
+                                        break
+                                except ValueError:
+                                    continue
                             break
-            logger.info(f"  [KPRC] {yyyymm} 전체행: {all_rows}")
-            logger.info(f"  [KPRC] {yyyymm} 매칭결과: {prices}")
+
+            logger.info(f"  ✓ [비철협회] 전월평균: {prices}")
             return prices
 
-        try:
-            this_prices = fetch_month_prices(this_month)
-            last_prices = fetch_month_prices(last_month)
         except Exception as e:
-            logger.warning(f"  ⚠ KPRC 조회 실패: {e}")
+            logger.warning(f"  ⚠ [비철협회] 전월평균 조회 실패: {e}")
             return {}
-
-        result = {}
-        for metal_name in kr_to_metal.values():
-            this_avg = this_prices.get(metal_name)
-            last_avg = last_prices.get(metal_name)
-            month_change = None
-            if this_avg and last_avg:
-                month_change = f"{((this_avg - last_avg) / last_avg * 100):+.2f}%"
-            result[metal_name] = {
-                'this_month_avg': this_avg,
-                'last_month_avg': last_avg,
-                'month_change': month_change,
-            }
-            logger.info(f"  ✓ {metal_name} KPRC 월평균: 당월={this_avg}, 전월={last_avg}")
-        return result
 
     def _scrape_naver_metals(self) -> Optional[List[Dict[str, Any]]]:
         """
