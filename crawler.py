@@ -54,28 +54,70 @@ class IndustryCrawler:
     def fetch_lme_prices(self) -> None:
         """
         LME 비철금속가격 수집
-        현재가/전일가/전일대비/당월평균: nonferrous.or.kr/stats/?act=sub3 일자별 시세
-        전월평균: nonferrous.or.kr/bbs/?bid=price 공식 월평균 게시글
+        현재가/전일가/전일대비: 네이버 금융 스크래핑 (JS 없이 안정적으로 동작)
+        전월평균: nonferrous.or.kr/bbs 공식 월평균 게시글
+        당월평균: 매일 수집한 현재가 누적 계산 (data.json price_history)
         """
         logger.info("LME 비철금속가격 수집 중...")
         try:
-            prices = self._scrape_nonferrous_daily()
+            prices = self._scrape_naver_metals()
             if prices:
+                # 오늘 가격을 누적 히스토리에 저장
+                self._save_price_history(prices)
+                # 당월평균: 누적 히스토리에서 계산
+                this_month_avgs = self._calc_this_month_avg()
+                # 전월평균: BBS 공식 게시글
                 last_month_avgs = self._scrape_nonferrous_last_month_bbs()
+
                 for p in prices:
-                    official = last_month_avgs.get(p['metal'])
-                    if official:
-                        p['last_month_avg'] = official
-                        if p['this_month_avg'] and official:
-                            p['month_change'] = f"{((p['this_month_avg'] - official) / official * 100):+.2f}%"
+                    metal = p['metal']
+                    p['prev_price'] = round(p['price'] - p['change_value'], 2)
+                    p['this_month_avg'] = this_month_avgs.get(metal)
+                    p['last_month_avg'] = last_month_avgs.get(metal)
+                    this_avg = p['this_month_avg']
+                    last_avg = p['last_month_avg']
+                    p['month_change'] = f"{((this_avg - last_avg) / last_avg * 100):+.2f}%" \
+                        if this_avg and last_avg else None
+
                 self.data['lme_prices'] = prices
                 logger.info(f"✓ LME 비철금속가격 {len(prices)}개 로드 완료")
             else:
-                logger.warning("⚠ 비철협회 스크래핑 실패 - 샘플 데이터 사용")
+                logger.warning("⚠ 네이버 금융 스크래핑 실패 - 샘플 데이터 사용")
                 self.data['lme_prices'] = self._get_sample_lme_prices()
         except Exception as e:
             logger.error(f"❌ LME 비철금속가격 수집 중 오류: {e}")
             self.data['lme_prices'] = self._get_sample_lme_prices()
+
+    def _save_price_history(self, prices: List[Dict]) -> None:
+        """오늘 현재가를 data.json price_history에 누적"""
+        data_path = Path(__file__).parent / 'data.json'
+        today = datetime.now(JST).strftime('%Y-%m-%d')
+        this_month = datetime.now(JST).strftime('%Y-%m')
+        existing = {}
+        if data_path.exists():
+            try:
+                with open(data_path, 'r', encoding='utf-8') as f:
+                    existing = json.load(f)
+            except Exception:
+                pass
+        history = existing.get('price_history', {})
+        # 당월 데이터만 유지
+        history = {d: v for d, v in history.items() if d[:7] >= this_month}
+        history[today] = {p['metal']: p['price'] for p in prices}
+        self.data['price_history'] = history
+
+    def _calc_this_month_avg(self) -> Dict[str, float]:
+        """price_history에서 당월 평균가 계산"""
+        this_month = datetime.now(JST).strftime('%Y-%m')
+        history = self.data.get('price_history', {})
+        sums: Dict[str, List[float]] = {}
+        for date_str, metal_prices in history.items():
+            if date_str.startswith(this_month):
+                for metal, price in metal_prices.items():
+                    sums.setdefault(metal, []).append(price)
+        result = {m: round(sum(v) / len(v), 2) for m, v in sums.items()}
+        logger.info(f"  당월평균 ({len(list(sums.values())[0]) if sums else 0}일): {result}")
+        return result
 
     def _scrape_nonferrous_last_month_bbs(self) -> Dict[str, float]:
         """
