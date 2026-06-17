@@ -66,8 +66,8 @@ class IndustryCrawler:
                 self._save_price_history(prices)
                 # 당월평균: 누적 히스토리에서 계산
                 this_month_avgs = self._calc_this_month_avg()
-                # 전월평균: BBS 공식 게시글
-                last_month_avgs = self._scrape_nonferrous_last_month_bbs()
+                # 전월평균: BBS 공식 게시글 (실패 시 캐시 사용)
+                last_month_avgs = self._get_last_month_avg_with_cache()
 
                 for p in prices:
                     metal = p['metal']
@@ -119,6 +119,41 @@ class IndustryCrawler:
         logger.info(f"  당월평균 ({len(list(sums.values())[0]) if sums else 0}일): {result}")
         return result
 
+    def _get_last_month_avg_with_cache(self) -> Dict[str, float]:
+        """전월평균 조회 - BBS 스크래핑 성공 시 캐시 저장, 실패 시 캐시 반환"""
+        now = datetime.now(JST)
+        last_month_dt = now.replace(day=1) - timedelta(days=1)
+        cache_key = last_month_dt.strftime('%Y%m')  # 예: '202605'
+
+        # 기존 캐시 로드
+        data_path = Path(__file__).parent / 'data.json'
+        cached = {}
+        if data_path.exists():
+            try:
+                with open(data_path, 'r', encoding='utf-8') as f:
+                    existing = json.load(f)
+                    cached_entry = existing.get('last_month_avg_cache', {})
+                    if cached_entry.get('month') == cache_key:
+                        cached = cached_entry.get('prices', {})
+            except Exception:
+                pass
+
+        # BBS에서 새로 조회 시도
+        fresh = self._scrape_nonferrous_last_month_bbs()
+        if fresh:
+            # 성공하면 캐시 저장
+            self.data['last_month_avg_cache'] = {'month': cache_key, 'prices': fresh}
+            logger.info(f"  ✓ 전월평균 BBS 조회 성공 → 캐시 저장")
+            return fresh
+        elif cached:
+            # 실패하면 캐시 사용
+            self.data['last_month_avg_cache'] = {'month': cache_key, 'prices': cached}
+            logger.warning(f"  ⚠ BBS 조회 실패 → 캐시값 사용: {cached}")
+            return cached
+        else:
+            logger.warning(f"  ⚠ BBS 조회 실패 + 캐시 없음 → 전월평균 null")
+            return {}
+
     def _scrape_nonferrous_last_month_bbs(self) -> Dict[str, float]:
         """
         nonferrous.or.kr/bbs/?bid=price 에서 전월 공식 LME 평균가격 파싱
@@ -144,7 +179,7 @@ class IndustryCrawler:
         }
         try:
             resp = requests.get("https://www.nonferrous.or.kr/bbs/?bid=price",
-                                headers=headers, timeout=10)
+                                headers=headers, timeout=30)
             resp.encoding = 'utf-8'
             soup = BeautifulSoup(resp.text, 'html.parser')
 
@@ -166,7 +201,7 @@ class IndustryCrawler:
                 logger.warning(f"  ⚠ [BBS] '{last_month_year}년 {last_month_num}월 LME 평균가격' 게시글 없음. 검색된 링크: {[t for t,_ in all_links if 'LME' in t]}")
                 return {}
 
-            detail = requests.get(target_url, headers=self.headers, timeout=10)
+            detail = requests.get(target_url, headers=headers, timeout=30)
             detail.encoding = 'utf-8'
             body = BeautifulSoup(detail.text, 'html.parser').get_text()
 
