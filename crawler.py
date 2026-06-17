@@ -53,13 +53,21 @@ class IndustryCrawler:
 
     def fetch_lme_prices(self) -> None:
         """
-        LME 비철금속가격 수집 - 전체를 nonferrous.or.kr/stats/?act=sub3 에서 가져옴
-        현재가/전일가/전일대비/당월평균/전월평균: 일자별 LME 시세 테이블 파싱
+        LME 비철금속가격 수집
+        현재가/전일가/전일대비/당월평균: nonferrous.or.kr/stats/?act=sub3 일자별 시세
+        전월평균: nonferrous.or.kr/bbs/?bid=price 공식 월평균 게시글
         """
         logger.info("LME 비철금속가격 수집 중...")
         try:
             prices = self._scrape_nonferrous_daily()
             if prices:
+                last_month_avgs = self._scrape_nonferrous_last_month_bbs()
+                for p in prices:
+                    official = last_month_avgs.get(p['metal'])
+                    if official:
+                        p['last_month_avg'] = official
+                        if p['this_month_avg'] and official:
+                            p['month_change'] = f"{((p['this_month_avg'] - official) / official * 100):+.2f}%"
                 self.data['lme_prices'] = prices
                 logger.info(f"✓ LME 비철금속가격 {len(prices)}개 로드 완료")
             else:
@@ -68,6 +76,62 @@ class IndustryCrawler:
         except Exception as e:
             logger.error(f"❌ LME 비철금속가격 수집 중 오류: {e}")
             self.data['lme_prices'] = self._get_sample_lme_prices()
+
+    def _scrape_nonferrous_last_month_bbs(self) -> Dict[str, float]:
+        """
+        nonferrous.or.kr/bbs/?bid=price 에서 전월 공식 LME 평균가격 파싱
+        게시글 본문: "Copper : 13507.13" 형식
+        """
+        import re
+        now = datetime.now(JST)
+        last_month_dt = now.replace(day=1) - timedelta(days=1)
+        last_month_year = last_month_dt.year
+        last_month_num = last_month_dt.month
+
+        metal_patterns = {
+            r'Copper':                      '구리(Copper)',
+            r'(?:Primary\s+)?Alumin(?:i)?um': '알루미늄(Aluminum)',
+            r'Zinc':                        '아연(Zinc)',
+            r'Nickel':                      '니켈(Nickel)',
+        }
+        try:
+            resp = requests.get("https://www.nonferrous.or.kr/bbs/?bid=price",
+                                headers=self.headers, timeout=10)
+            resp.encoding = 'utf-8'
+            soup = BeautifulSoup(resp.text, 'html.parser')
+
+            target_url = None
+            for a in soup.find_all('a', href=True):
+                title = a.get_text(strip=True)
+                href = a['href']
+                if ('LME 평균가격' in title or 'LME평균가격' in title) \
+                        and str(last_month_year) in title \
+                        and f'{last_month_num}월' in title:
+                    target_url = 'https://www.nonferrous.or.kr/bbs/' + href \
+                        if href.startswith('?') else href
+                    logger.info(f"  [BBS] 전월 게시글: {title}")
+                    break
+
+            if not target_url:
+                logger.warning(f"  ⚠ [BBS] {last_month_year}년 {last_month_num}월 게시글 없음")
+                return {}
+
+            detail = requests.get(target_url, headers=self.headers, timeout=10)
+            detail.encoding = 'utf-8'
+            body = BeautifulSoup(detail.text, 'html.parser').get_text()
+
+            prices = {}
+            for pattern, metal_name in metal_patterns.items():
+                m = re.search(rf'{pattern}\s*[:\s]\s*([\d,]+\.?\d*)', body, re.IGNORECASE)
+                if m:
+                    val = float(m.group(1).replace(',', ''))
+                    if val > 100:
+                        prices[metal_name] = val
+            logger.info(f"  ✓ [BBS] 전월평균: {prices}")
+            return prices
+        except Exception as e:
+            logger.warning(f"  ⚠ [BBS] 전월평균 조회 실패: {e}")
+            return {}
 
     def _scrape_nonferrous_daily(self) -> Optional[List[Dict]]:
         """
